@@ -3,6 +3,10 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import './index.css';
+import { initRemoteLog } from './services/remoteLog';
+
+// app logs -> log server on Railway (scrubbed of cookies/stream URLs)
+try { initRemoteLog(); } catch { /* ignore */ }
 
 // Remove boot splash once React has rendered
 const hideSplash = () => {
