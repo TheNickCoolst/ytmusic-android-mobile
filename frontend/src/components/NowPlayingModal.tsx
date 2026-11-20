@@ -26,6 +26,7 @@ import {
   Car,
   Mic2,
   Gauge,
+  Disc3,
   Volume2,
   VolumeX,
   X
@@ -103,7 +104,10 @@ export const NowPlayingModal: React.FC = () => {
     equalizerPreset,
     setEqualizerPreset,
     isMuted,
-    toggleMute
+    toggleMute,
+    djMode,
+    setDjMode,
+    djStatus,
   } = usePlayer();
 
   const [activeTab, setActiveTab] = useState<'queue' | 'lyrics' | 'eq'>('queue');
@@ -656,6 +660,44 @@ export const NowPlayingModal: React.FC = () => {
             title="Wiederholen"
           >
             {repeatMode === 'one' ? <Repeat1 className="w-5 h-5" /> : <Repeat className="w-5 h-5" />}
+          </button>
+        </div>
+
+        {/* DJ mode: automatic beat-matched mixing into the next track */}
+        <div className="flex items-center justify-between gap-3 mx-1 mb-2 px-3 py-2 rounded-xl bg-white/5 border border-white/10">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <Disc3
+              className={`w-5 h-5 flex-shrink-0 ${djMode ? 'text-red-500' : 'text-zinc-500'} ${
+                djStatus.phase === 'mixing' ? 'animate-spin' : ''
+              }`}
+            />
+            <div className="min-w-0">
+              <div className="text-xs font-bold text-white">DJ-Modus</div>
+              <div className="text-[11px] text-zinc-400 truncate">
+                {!djMode
+                  ? 'Mixt automatisch in den nächsten Song'
+                  : djStatus.phase === 'analyzing'
+                  ? 'Analysiert Beats & Übergang …'
+                  : djStatus.phase === 'ready'
+                  ? `${djStatus.bpmOut ? Math.round(djStatus.bpmOut) : '?'} → ${
+                      djStatus.bpmIn ? Math.round(djStatus.bpmIn) : '?'
+                    } BPM · ${djStatus.beatSync ? 'Beatmatch' : 'Blend'} in ${formatTime(
+                      Math.max(0, (djStatus.mixStart || 0) - currentTime)
+                    )}`
+                  : djStatus.phase === 'mixing'
+                  ? `Mix läuft${djStatus.beatSync ? ' · Beats synchron' : ''} …`
+                  : djStatus.message || 'Bereit'}
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={() => setDjMode(!djMode)}
+            className={`w-10 h-6 flex-shrink-0 rounded-full p-0.5 transition-colors ${djMode ? 'bg-red-600' : 'bg-zinc-700'}`}
+            title="DJ-Modus"
+          >
+            <div
+              className={`w-5 h-5 rounded-full bg-white transition-transform ${djMode ? 'translate-x-4' : 'translate-x-0'}`}
+            />
           </button>
         </div>
 

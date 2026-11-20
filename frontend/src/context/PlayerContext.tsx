@@ -2,6 +2,17 @@ import React, { createContext, useContext, useState, useEffect, useRef } from 'r
 import { Track, Playlist, RepeatMode, EqualizerPreset } from '../types';
 import { api, isServerMarkedDown } from '../services/api';
 import { isNativeApp } from '../services/youtube';
+import { prepareTrack, planMix, MixPlan, TrackAnalysis } from '../services/dj';
+
+export interface DjStatus {
+  phase: 'off' | 'idle' | 'analyzing' | 'ready' | 'mixing' | 'error';
+  message?: string;
+  bpmOut?: number | null;
+  bpmIn?: number | null;
+  beatSync?: boolean;
+  mixStart?: number; // position in the current track where the mix begins
+  nextTitle?: string;
+}
 
 
 const safeSet = (k: string, v: string) => {
@@ -47,6 +58,11 @@ interface PlayerContextType {
   setTrebleGain: (gain: number) => void;
   playbackError: string | null;
   clearPlaybackError: () => void;
+
+  // DJ mode: beat-matched automatic transitions into the next track
+  djMode: boolean;
+  setDjMode: (on: boolean) => void;
+  djStatus: DjStatus;
 
   // Controls
   playTrack: (track: Track, newQueue?: Track[]) => void;
@@ -110,7 +126,8 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const setPlaybackRate = (rate: number) => {
     setPlaybackRateState(rate);
-    if (audioRef.current) {
+    playbackRateRef.current = rate;
+    if (audioRef.current && !djTransRef.current) {
       audioRef.current.playbackRate = rate;
     }
   };
@@ -123,6 +140,15 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [trebleGain, setTrebleGainState] = useState<number>(0);
   const [equalizerPreset, setEqualizerPresetState] = useState<EqualizerPreset>('flat');
   const [playbackError, setPlaybackError] = useState<string | null>(null);
+  const [djMode, setDjModeState] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('ytmusic_dj_mode') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const [djStatus, setDjStatus] = useState<DjStatus>({ phase: 'off' });
+  const [djEpoch, setDjEpoch] = useState(0);
 
   // Library state
   const [likedTracks, setLikedTracks] = useState<Track[]>(() => {
@@ -176,38 +202,125 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const midFilterRef = useRef<BiquadFilterNode | null>(null);
   const trebleFilterRef = useRef<BiquadFilterNode | null>(null);
 
-  // Initialize Audio Element
-  useEffect(() => {
+  // ---- DJ mode: second deck + transition state ----
+  type DjPlanRef = {
+    forId: string;
+    nextIndex: number;
+    track: Track;
+    plan: MixPlan;
+    inAnalysis: TrackAnalysis;
+    blobUrl: string;
+    timer?: ReturnType<typeof setTimeout>;
+  };
+  type DjTrans = {
+    out: HTMLAudioElement;
+    inn: HTMLAudioElement;
+    P: DjPlanRef;
+    mixStart: number;
+    fadeLen: number;
+    inRate: number;
+    base: number;
+    syncPhase: boolean;
+    swapped: boolean;
+    started: boolean;
+    alive?: boolean;
+    latKey: 'fg' | 'bg';
+    replayed?: boolean;
+    loadTimer?: ReturnType<typeof setTimeout>;
+    lastCorr: number;
+    startPos: number;
+    measured: boolean;
+    t0: number; // wall clock at start (fallback if outgoing stalls)
+    tOut0: number;
+    timer: ReturnType<typeof setInterval>;
+  };
+  const decksRef = useRef<HTMLAudioElement[]>([]);
+  const deckBlobRef = useRef(new Map<HTMLAudioElement, string>());
+  const djModeRef = useRef(djMode);
+  const djPlanRef = useRef<DjPlanRef | null>(null);
+  const djTransRef = useRef<DjTrans | null>(null);
+  const djTokenRef = useRef(0);
+  const djTickRef = useRef<() => void>(() => {});
+  const glideRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const volumeRef = useRef(1);
+  const mutedRef = useRef(false);
+  const playbackRateRef = useRef(1);
+  // learned start latency of play() on this device (s), separately for app visible / in background
+  const djLatencyRef = useRef<{ fg: number; bg: number }>(
+    (() => {
+      try {
+        const v = JSON.parse(localStorage.getItem('ytmusic_dj_latency2') || 'null');
+        if (v && typeof v.fg === 'number' && typeof v.bg === 'number') return v;
+      } catch {
+        /* ignore */
+      }
+      return { fg: 0.2, bg: 0.45 };
+    })()
+  );
+  const latKey = (): 'fg' | 'bg' => (document.visibilityState === 'visible' ? 'fg' : 'bg');
+  djModeRef.current = djMode;
+
+  // Audio decks. A new deck is created for every DJ transition: Android WebView refuses to start
+  // a paused, preloaded element while the app is in the background, but a fresh element plays fine.
+  const eqSourcesRef = useRef(new Map<HTMLAudioElement, MediaElementAudioSourceNode>());
+  const connectDeckToEq = (d: HTMLAudioElement) => {
+    const ctx = audioContextRef.current;
+    if (!ctx || !bassFilterRef.current || eqSourcesRef.current.has(d)) return;
+    try {
+      const src = ctx.createMediaElementSource(d);
+      src.connect(bassFilterRef.current);
+      eqSourcesRef.current.set(d, src);
+    } catch (e) {
+      console.warn('EQ connect failed', e);
+    }
+  };
+
+  const makeDeck = () => {
     const audio = new Audio();
     audio.preload = 'auto';
     audio.setAttribute('playsinline', 'true');
     (audio as any).playsInline = true;
+    // tempo matching must not change the pitch
+    (audio as any).preservesPitch = true;
+    // only the active deck drives the UI / player state
+    const active = () => audio === audioRef.current;
 
-    audio.addEventListener('play', () => setIsPlaying(true));
-    audio.addEventListener('pause', () => setIsPlaying(false));
-    audio.addEventListener('waiting', () => setIsBuffering(true));
+    audio.addEventListener('play', () => active() && setIsPlaying(true));
+    audio.addEventListener('pause', () => active() && setIsPlaying(false));
+    audio.addEventListener('waiting', () => active() && setIsBuffering(true));
     audio.addEventListener('playing', () => {
+      if (!active()) return;
       setIsBuffering(false);
       setPlaybackError(null);
       retryRef.current = 0;
     });
-    audio.addEventListener('canplay', () => setIsBuffering(false));
+    audio.addEventListener('canplay', () => active() && setIsBuffering(false));
 
     audio.addEventListener('timeupdate', () => {
+      if (!active()) return;
       setCurrentTime(audio.currentTime);
       updateMediaSessionPosition(audio.currentTime, audio.duration);
+      djTickRef.current();
     });
 
     audio.addEventListener('loadedmetadata', () => {
+      if (!active()) return;
       setDuration(audio.duration || 0);
       updateMediaSessionPosition(0, audio.duration || 0);
     });
 
     audio.addEventListener('ended', () => {
+      if (!active()) return;
       handleTrackEndRef.current();
     });
 
     audio.addEventListener('error', () => {
+      if (!active()) {
+        // incoming DJ deck failed before taking over -> keep the current song, normal transition later
+        const T = djTransRef.current;
+        if (T && T.inn === audio && !T.swapped) djAbortRef.current('Nächster Titel konnte nicht geladen werden');
+        return;
+      }
       const code = audio.error?.code;
       console.error('Audio playback error, code:', code, audio.src);
       const src = audio.src;
@@ -232,12 +345,21 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setPlaybackError('Song konnte nicht geladen werden. Bitte Internetverbindung prüfen und nochmal antippen.');
     });
 
-    audioRef.current = audio;
+    decksRef.current.push(audio);
+    connectDeckToEq(audio);
+    return audio;
+  };
 
+  useEffect(() => {
+    const a = makeDeck();
+    audioRef.current = a;
     return () => {
-      audio.pause();
-      audio.src = '';
+      for (const d of decksRef.current) {
+        d.pause();
+        d.src = '';
+      }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Initialize Web Audio API Equalizer on first user playback
@@ -247,7 +369,6 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
       if (!AudioCtx) return;
       const ctx = new AudioCtx();
-      const source = ctx.createMediaElementSource(audioRef.current);
 
       // Low Shelf Filter (Bass: 60Hz - 250Hz)
       const bass = ctx.createBiquadFilter();
@@ -268,13 +389,13 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       treble.frequency.value = 4000;
       treble.gain.value = trebleGain;
 
-      source.connect(bass);
       bass.connect(mid);
       mid.connect(treble);
       treble.connect(ctx.destination);
 
       audioContextRef.current = ctx;
       bassFilterRef.current = bass;
+      for (const d of decksRef.current) connectDeckToEq(d);
       midFilterRef.current = mid;
       trebleFilterRef.current = treble;
     } catch (e) {
@@ -464,6 +585,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       audioContextRef.current.resume().catch(console.error);
     }
 
+    abortDj();
     retryRef.current = 0;
     setPlaybackError(null);
     setCurrentTrack(track);
@@ -508,7 +630,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (token !== playTokenRef.current || !audioRef.current) return;
 
     audioRef.current.src = streamUrl;
-    audioRef.current.playbackRate = playbackRate;
+    audioRef.current.playbackRate = playbackRateRef.current;
 
     audioRef.current.volume = volume;
     audioRef.current.muted = isMuted;
@@ -572,10 +694,390 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   handleTrackEndRef.current = handleTrackEnd;
 
+  // ==================================================================
+  // DJ MODE ENGINE
+  // Deck B is preloaded with the next track (full file in memory). At the planned mix point
+  // (end of the last full-energy phrase, snapped to a bar) deck B starts silently, is tempo-matched
+  // via playbackRate (pitch preserved), kept in phase by tiny rate nudges and crossfaded in with an
+  // equal-power curve. Afterwards the tempo glides back to the user's speed.
+  // ==================================================================
+  const clampN = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+  // Chrome pauses volume-0 media while the app is in the background -> "silent" = -60 dB, never 0
+  const SILENT = 0.001;
+
+  const stopGlide = () => {
+    if (glideRef.current) clearInterval(glideRef.current);
+    glideRef.current = null;
+  };
+
+  const releaseDeck = (d: HTMLAudioElement) => {
+    d.pause();
+    d.removeAttribute('src');
+    try {
+      d.load();
+    } catch {
+      /* ignore */
+    }
+    const blob = deckBlobRef.current.get(d);
+    if (blob) {
+      URL.revokeObjectURL(blob);
+      deckBlobRef.current.delete(d);
+    }
+    const src = eqSourcesRef.current.get(d);
+    if (src) {
+      try {
+        src.disconnect();
+      } catch {
+        /* ignore */
+      }
+      eqSourcesRef.current.delete(d);
+    }
+    decksRef.current = decksRef.current.filter((x) => x !== d);
+  };
+
+  const clearDjPlan = () => {
+    const P = djPlanRef.current;
+    if (P) {
+      if (P.timer) clearTimeout(P.timer);
+      // blob not handed to a deck yet -> free it
+      if (!djTransRef.current || djTransRef.current.P !== P) URL.revokeObjectURL(P.blobUrl);
+    }
+    djPlanRef.current = null;
+    djTokenRef.current++;
+  };
+
+  const swapDecks = (T: DjTrans) => {
+    T.swapped = true;
+    const { P } = T;
+    audioRef.current = T.inn;
+    playTokenRef.current++; // cancel pending loads of an older playTrack
+    currentTrackIdRef.current = P.track.id;
+    directSrcRef.current = false;
+    retryRef.current = 0;
+    djPlanRef.current = null;
+    setCurrentTrack(P.track);
+    setQueueIndex(P.nextIndex);
+    setDuration(T.inn.duration || P.inAnalysis.duration);
+    setCurrentTime(T.inn.currentTime);
+    setIsPlaying(true);
+    setIsBuffering(false);
+    setPlaybackError(null);
+    setHistory((prev) => [P.track, ...prev.filter((t) => t.id !== P.track.id)].slice(0, 50));
+  };
+
+  const finishTransition = () => {
+    const T = djTransRef.current;
+    if (!T) return;
+    if (!T.started) {
+      // incoming never started (still loading) -> keep the current song
+      return abortDj();
+    }
+    clearInterval(T.timer);
+    if (!T.swapped) swapDecks(T);
+    djTransRef.current = null;
+    releaseDeck(T.out);
+    T.inn.volume = volumeRef.current;
+    // glide tempo back to the user's speed (inaudible, pitch preserved)
+    stopGlide();
+    const from = T.inn.playbackRate;
+    if (Math.abs(from - playbackRateRef.current) > 0.002) {
+      const t0 = Date.now();
+      glideRef.current = setInterval(() => {
+        if (audioRef.current !== T.inn) return stopGlide();
+        const k = Math.min(1, (Date.now() - t0) / 8000);
+        T.inn.playbackRate = from + (playbackRateRef.current - from) * k;
+        if (k >= 1) stopGlide();
+      }, 200);
+    }
+    setDjStatus({ phase: 'idle' });
+    setDjEpoch((e) => e + 1);
+  };
+
+  /** Stop any DJ activity and keep only the active deck playing normally. */
+  const abortDj = (message?: string) => {
+    stopGlide();
+    const T = djTransRef.current;
+    if (T) {
+      clearInterval(T.timer);
+      if (T.loadTimer) clearTimeout(T.loadTimer);
+      djTransRef.current = null;
+      releaseDeck(T.swapped ? T.out : T.inn);
+      const act = audioRef.current;
+      if (act) {
+        act.volume = volumeRef.current;
+        act.playbackRate = playbackRateRef.current;
+      }
+      if (djPlanRef.current === T.P) djPlanRef.current = null;
+    }
+    clearDjPlan();
+    if (message) setDjStatus({ phase: 'error', message });
+  };
+  const djAbortRef = useRef<(msg?: string) => void>(() => {});
+  djAbortRef.current = abortDj;
+
+  const djStep = () => {
+    const T = djTransRef.current;
+    if (!T || !T.started) return;
+    const { out, inn } = T;
+    const vol = volumeRef.current;
+    // wall-clock fallback in case the outgoing deck stalls
+    const tWall = T.tOut0 + ((performance.now() - T.t0) / 1000) * T.base;
+    let t = Math.max(out.currentTime, tWall - 1.5);
+    if (out.ended) t = T.mixStart + T.fadeLen;
+
+    // only hand over once the incoming deck is really playing
+    if (!T.swapped && !T.alive) {
+      T.alive = !inn.paused && inn.currentTime > T.startPos + 0.03;
+      if (!T.alive) {
+        const waited = performance.now() - T.t0;
+        if (waited > 1200 && !T.replayed) {
+          T.replayed = true;
+          inn.play().catch(() => {});
+        }
+        if (waited > 3000 || out.ended) return djAbortRef.current('Übergang nicht möglich – normaler Wechsel');
+        if (t >= T.mixStart) {
+          // late: keep the outgoing at full volume and start the fade when the incoming runs
+          out.volume = vol;
+          T.mixStart = t + 0.04;
+          T.syncPhase = false;
+        }
+        return;
+      }
+    }
+    if (t >= T.mixStart && !T.swapped) swapDecks(T);
+
+    const p = clampN((t - T.mixStart) / T.fadeLen, 0, 1);
+    out.volume = Math.max(p < 1 ? SILENT : 0, vol * Math.cos((p * Math.PI) / 2));
+    inn.volume = t < T.mixStart ? SILENT : Math.max(SILENT, vol * Math.sin((p * Math.PI) / 2));
+
+    // phase lock: nudge the incoming tempo until its beats sit on the outgoing beats
+    if (T.syncPhase && p < 1 && !inn.paused) {
+      const plan = T.P.plan;
+      const expected = plan.inStart + (t - plan.mixStart) * plan.rate;
+      let e = inn.currentTime - expected;
+      if (!T.measured) {
+        // learn this device's start latency (measured before any correction) for the next transition
+        if (inn.currentTime < T.startPos + 0.12) return;
+        T.measured = true;
+        const k = T.latKey;
+        const L = clampN(djLatencyRef.current[k] - e / plan.rate, 0, 0.8);
+        djLatencyRef.current[k] = 0.3 * djLatencyRef.current[k] + 0.7 * L;
+        safeSet('ytmusic_dj_latency2', JSON.stringify(djLatencyRef.current));
+      }
+      const bt = T.P.inAnalysis.beat || 0.5;
+      if (Math.abs(e) > bt / 2) e -= Math.round(e / bt) * bt;
+      // while still silent (pre-roll / fade start) correct hard, later only gently
+      const silent = t < T.mixStart + 0.5;
+      const corr =
+        Math.abs(e) < 0.012 ? 0 : silent ? clampN(-e * 1.5, -0.15, 0.15) : clampN(-e * 0.8, -0.04, 0.04);
+      if (Math.abs(corr - T.lastCorr) > 0.004) {
+        inn.playbackRate = T.inRate * (1 + corr);
+        T.lastCorr = corr;
+      }
+    }
+    if (p >= 1) finishTransition();
+  };
+  const djStepRef = useRef(djStep);
+  djStepRef.current = djStep;
+
+  // incoming deck has metadata -> position it and start (silently) in sync with the outgoing deck
+  const beginIncoming = (T: DjTrans, quick: boolean) => {
+    if (djTransRef.current !== T || T.started) return;
+    if (T.loadTimer) {
+      clearTimeout(T.loadTimer);
+      T.loadTimer = undefined;
+    }
+    const { out, inn, P } = T;
+    const plan = P.plan;
+    const t = out.currentTime;
+    const dur = out.duration || plan.mixStart + plan.fadeLen;
+    let inPos: number;
+    if (quick || t > plan.mixStart + 0.25) {
+      // manual skip (or late): blend right now
+      T.mixStart = t;
+      T.fadeLen = quick ? 3 : Math.max(1.5, Math.min(plan.fadeLen, dur - t - 0.1));
+      T.syncPhase = false;
+      inPos = plan.inStart;
+    } else {
+      // silent pre-roll + learned latency compensation; phase lock fixes the rest
+      T.latKey = latKey();
+      const comp = plan.beatSync ? djLatencyRef.current[T.latKey] * plan.rate : 0;
+      const raw = plan.inStart - (plan.mixStart - t) * plan.rate + comp;
+      if (raw < -0.03) {
+        // loaded early: start exactly when the incoming has to begin at its first sample
+        setTimeout(() => beginIncoming(T, quick), (-raw / plan.rate / T.base) * 1000);
+        return;
+      }
+      inPos = Math.max(0, raw);
+    }
+    inn.currentTime = inPos;
+    inn.playbackRate = T.inRate;
+    T.startPos = inPos;
+    T.measured = !T.syncPhase;
+    T.started = true;
+    T.t0 = performance.now();
+    T.tOut0 = t;
+    inn.play().catch((e) => {
+      if (e?.name !== 'AbortError') djAbortRef.current('Übergang konnte nicht gestartet werden');
+    });
+  };
+
+  const startTransition = (P: DjPlanRef, quick: boolean): boolean => {
+    const A = audioRef.current;
+    if (!A || djTransRef.current) return false;
+    if (P.timer) {
+      clearTimeout(P.timer);
+      P.timer = undefined;
+    }
+    stopGlide();
+    const plan = P.plan;
+    const base = playbackRateRef.current;
+    const B = makeDeck();
+    deckBlobRef.current.set(B, P.blobUrl);
+    B.volume = SILENT;
+    B.muted = mutedRef.current;
+    const T: DjTrans = {
+      out: A,
+      inn: B,
+      P,
+      mixStart: plan.mixStart,
+      fadeLen: plan.fadeLen,
+      inRate: plan.beatSync ? plan.rate * base : base,
+      base,
+      syncPhase: plan.beatSync,
+      swapped: false,
+      started: false,
+      latKey: 'fg',
+      lastCorr: 0,
+      startPos: 0,
+      measured: false,
+      t0: performance.now(),
+      tOut0: A.currentTime,
+      timer: setInterval(() => djStepRef.current(), 40),
+    };
+    djTransRef.current = T;
+    B.addEventListener('loadedmetadata', () => beginIncoming(T, quick), { once: true });
+    T.loadTimer = setTimeout(() => {
+      if (!T.started) djAbortRef.current('Nächster Titel lädt nicht – normaler Übergang');
+    }, 4000);
+    B.src = P.blobUrl;
+    B.load();
+    setDjStatus((prev) => ({ ...prev, phase: 'mixing' }));
+    return true;
+  };
+
+  // called on every timeupdate of the active deck
+  djTickRef.current = () => {
+    const P = djPlanRef.current;
+    const A = audioRef.current;
+    if (!djModeRef.current || !P || djTransRef.current || !A || A.paused) return;
+    if (P.forId !== currentTrackIdRef.current) return;
+    // pre-roll before the mix point + headroom to create/load the incoming deck
+    const lead = Math.min(2.5, P.plan.inStart / P.plan.rate) + 0.6;
+    const startAt = P.plan.mixStart - lead;
+    const t = A.currentTime;
+    if (t >= startAt - 0.03) {
+      startTransition(P, false);
+    } else if (startAt - t < 1.5 && !P.timer) {
+      // timeupdate is coarse (~250 ms) -> schedule the exact start
+      P.timer = setTimeout(() => {
+        P.timer = undefined;
+        djTickRef.current();
+      }, ((startAt - t) / (A.playbackRate || 1)) * 1000);
+    }
+  };
+
+  const setDjMode = (on: boolean) => {
+    setDjModeState(on);
+    djModeRef.current = on;
+    safeSet('ytmusic_dj_mode', on ? '1' : '0');
+    if (!on) abortDj();
+  };
+
+  // Which track comes next for the DJ (shuffle: one random pick per current track)
+  const djShuffleRef = useRef<{ forId: string; idx: number } | null>(null);
+  let djNextIndex = -1;
+  if (djMode && currentTrack && queue.length > 1 && queueIndex >= 0 && repeatMode !== 'one') {
+    if (shuffle) {
+      if (djShuffleRef.current?.forId !== currentTrack.id || !queue[djShuffleRef.current.idx]) {
+        let idx = Math.floor(Math.random() * queue.length);
+        if (idx === queueIndex) idx = (idx + 1) % queue.length;
+        djShuffleRef.current = { forId: currentTrack.id, idx };
+      }
+      djNextIndex = djShuffleRef.current.idx;
+    } else if (queueIndex + 1 < queue.length) {
+      djNextIndex = queueIndex + 1;
+    } else if (repeatMode === 'all') {
+      djNextIndex = 0;
+    }
+  }
+  const djNextId = djNextIndex >= 0 ? queue[djNextIndex]?.id : undefined;
+
+  // Prepare (download + analyse + plan) the next transition
+  useEffect(() => {
+    if (!djMode) {
+      setDjStatus({ phase: 'off' });
+      return;
+    }
+    if (djTransRef.current) return;
+    const cur = currentTrack;
+    if (!cur || djNextIndex < 0 || !djNextId) {
+      clearDjPlan();
+      setDjStatus({ phase: 'idle', message: 'Kein nächster Titel in der Warteschlange' });
+      return;
+    }
+    const P = djPlanRef.current;
+    if (P && P.forId === cur.id && P.track.id === djNextId) return;
+    clearDjPlan();
+    const token = djTokenRef.current;
+    const nextTrack = queue[djNextIndex];
+    const nextIndex = djNextIndex;
+    setDjStatus({ phase: 'analyzing', nextTitle: nextTrack.title });
+    const delay = setTimeout(async () => {
+      try {
+        const [a, b] = await Promise.all([prepareTrack(cur.id, false), prepareTrack(nextTrack.id, true)]);
+        if (token !== djTokenRef.current || currentTrackIdRef.current !== cur.id || djTransRef.current) {
+          if (b.blobUrl) URL.revokeObjectURL(b.blobUrl);
+          return;
+        }
+        const plan = planMix(a.analysis, b.analysis);
+        if (!plan || !b.blobUrl) throw new Error('Kein Mix möglich');
+        djPlanRef.current = {
+          forId: cur.id,
+          nextIndex,
+          track: nextTrack,
+          plan,
+          inAnalysis: b.analysis,
+          blobUrl: b.blobUrl,
+        };
+        setDjStatus({
+          phase: 'ready',
+          bpmOut: plan.bpmOut,
+          bpmIn: plan.bpmIn,
+          beatSync: plan.beatSync,
+          mixStart: plan.mixStart,
+          nextTitle: nextTrack.title,
+        });
+      } catch (e) {
+        if (token !== djTokenRef.current) return;
+        console.warn('DJ prepare failed', e);
+        setDjStatus({ phase: 'error', message: 'Analyse fehlgeschlagen – normaler Übergang', nextTitle: nextTrack.title });
+      }
+    }, 2500);
+    return () => clearTimeout(delay);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [djMode, currentTrack?.id, djNextId, djNextIndex, djEpoch]);
+
+  // keep lock-screen metadata + handlers current (also after DJ deck swaps)
+  useEffect(() => {
+    if (currentTrack) setupMediaSession(currentTrack);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentTrack, queue, queueIndex, shuffle, repeatMode, djMode]);
+
   // Prefetch next track on the server so skipping / auto-advance starts instantly
   const nextPrefetchId = queue[queueIndex + 1]?.id;
   useEffect(() => {
-    if (!nextPrefetchId) return;
+    if (!nextPrefetchId || djMode) return;
     const t = setTimeout(() => {
       if (isNativeApp()) {
         // warm the direct YouTube URL cache
@@ -585,7 +1087,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
     }, 3000);
     return () => clearTimeout(t);
-  }, [nextPrefetchId]);
+  }, [nextPrefetchId, djMode]);
 
   // Resume Web Audio (only exists if EQ was enabled) when the app comes back to foreground
   useEffect(() => {
@@ -609,6 +1111,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const pause = () => {
+    if (djTransRef.current) finishTransition();
     if (audioRef.current) {
       audioRef.current.pause();
       setIsPlaying(false);
@@ -626,6 +1129,12 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const nextTrack = () => {
     if (queue.length === 0) return;
+    if (djModeRef.current) {
+      // skip during a mix = jump to its end; otherwise a quick 3 s DJ blend into the prepared track
+      if (djTransRef.current) return finishTransition();
+      const P = djPlanRef.current;
+      if (P && P.forId === currentTrackIdRef.current && startTransition(P, true)) return;
+    }
     let nextIdx = queueIndex + 1;
     if (shuffle) {
       nextIdx = Math.floor(Math.random() * queue.length);
@@ -641,6 +1150,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const previousTrack = () => {
+    if (djTransRef.current) finishTransition();
     if (!audioRef.current || queue.length === 0) return;
     if (audioRef.current.currentTime > 3) {
       audioRef.current.currentTime = 0;
@@ -656,6 +1166,12 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const seek = (seconds: number) => {
+    if (djTransRef.current) finishTransition();
+    const P = djPlanRef.current;
+    if (P?.timer) {
+      clearTimeout(P.timer);
+      P.timer = undefined;
+    }
     if (audioRef.current) {
       audioRef.current.currentTime = seconds;
       setCurrentTime(seconds);
@@ -664,8 +1180,9 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const setVolume = (val: number) => {
+    volumeRef.current = val;
     if (audioRef.current) {
-      audioRef.current.volume = val;
+      if (!djTransRef.current) audioRef.current.volume = val;
       setVolumeState(val);
       setIsMuted(val === 0);
     }
@@ -673,13 +1190,10 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const toggleMute = () => {
     if (audioRef.current) {
-      if (isMuted) {
-        audioRef.current.muted = false;
-        setIsMuted(false);
-      } else {
-        audioRef.current.muted = true;
-        setIsMuted(true);
-      }
+      const m = !isMuted;
+      mutedRef.current = m;
+      for (const d of decksRef.current) d.muted = m;
+      setIsMuted(m);
     }
   };
 
@@ -835,6 +1349,9 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         setTrebleGain,
         playbackError,
         clearPlaybackError: () => setPlaybackError(null),
+        djMode,
+        setDjMode,
+        djStatus,
         playTrack,
         togglePlay,
         pause,

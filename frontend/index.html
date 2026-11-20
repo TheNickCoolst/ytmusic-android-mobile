@@ -138,8 +138,16 @@
           } catch (e) {}
         }
         window.__bootShow = show;
+        function appMounted() {
+          var root = document.getElementById('root');
+          return !!(root && root.childElementCount > 0);
+        }
         window.addEventListener('error', function (e) {
           var t = e && e.target;
+          // after the app is running, errors are handled in-app (a broken cover image must not kill the UI)
+          if (appMounted()) return;
+          var tag = t && t.tagName ? String(t.tagName).toUpperCase() : '';
+          if (tag === 'IMG' || tag === 'AUDIO' || tag === 'VIDEO' || tag === 'SOURCE') return;
           if (t && t !== window && (t.src || t.href)) {
             show('Ressource konnte nicht geladen werden: ' + (t.src || t.href));
             return;
