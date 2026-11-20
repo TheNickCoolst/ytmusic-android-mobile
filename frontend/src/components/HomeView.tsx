@@ -1,21 +1,65 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Play, MoreVertical, Flame, RefreshCw, Loader2, Sparkles, Disc } from 'lucide-react';
 import { Track } from '../types';
 import { api } from '../services/api';
+import { isNativeApp, HomeCard } from '../services/youtube';
 import { usePlayer } from '../context/PlayerContext';
 
 interface HomeViewProps {
   filterMood?: string | null;
+  onChips?: (chips: string[]) => void;
+  accountKey?: string;
 }
 
-export const HomeView: React.FC<HomeViewProps> = ({ filterMood }) => {
+export const HomeView: React.FC<HomeViewProps> = ({ filterMood, onChips, accountKey }) => {
   const [shelves, setShelves] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [openingCard, setOpeningCard] = useState<string | null>(null);
   const { playTrack, currentTrack, isPlaying, history } = usePlayer();
+  const chipParamsRef = useRef<Record<string, string>>({});
+  const loadTokenRef = useRef(0);
+
+  const openCard = async (card: HomeCard) => {
+    if (openingCard) return;
+    setOpeningCard(card.id);
+    try {
+      const tracks = await api.getCardTracks(card);
+      if (tracks.length > 0) playTrack(tracks[0], tracks);
+    } catch (e) {
+      console.warn('Could not open card', e);
+    } finally {
+      setOpeningCard(null);
+    }
+  };
 
   const loadFeed = async (mood?: string | null) => {
     setLoading(true);
+    const token = ++loadTokenRef.current;
     try {
+      const chipParams = mood ? chipParamsRef.current[mood] : undefined;
+      if (isNativeApp() && (!mood || chipParams)) {
+        // real YouTube Music start page (personalised when logged in) or mood chip page
+        const data = await api.getHomeFeed('DE', chipParams);
+        if (token !== loadTokenRef.current) return;
+        setShelves(data.shelves || []);
+        if (!mood && data.chips?.length) {
+          chipParamsRef.current = Object.fromEntries(data.chips.map((c) => [c.title, c.params]));
+          onChips?.(data.chips.map((c) => c.title));
+        }
+        setLoading(false);
+        // more sections like in the app (YouTube delivers the start page in pages)
+        let cont = data.continuation || null;
+        setLoadingMore(!!cont);
+        for (let page = 0; cont && page < 4; page++) {
+          const more = await api.getHomeMore(cont).catch(() => null);
+          if (!more || token !== loadTokenRef.current) break;
+          setShelves((prev) => [...prev, ...more.shelves]);
+          cont = more.continuation;
+        }
+        if (token === loadTokenRef.current) setLoadingMore(false);
+        return;
+      }
       if (mood) {
         const results = await api.search(`${mood} music hits`, 'songs');
         const columns: Track[][] = [];
@@ -52,12 +96,16 @@ export const HomeView: React.FC<HomeViewProps> = ({ filterMood }) => {
 
   useEffect(() => {
     loadFeed(filterMood);
-  }, [filterMood]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterMood, accountKey]);
+
+  // logged in: YouTube's own "Wieder reinhören" replaces the local history row
+  const hasYtListenAgain = shelves.some((s) => /wieder reinhören|listen again/i.test(`${s.title} ${s.subtitle || ''}`));
 
   return (
     <div className="pb-36 space-y-7 pt-2 select-none">
       {/* Zuletzt gehört (Listen Again) from History if available */}
-      {history.length > 0 && !filterMood && (
+      {history.length > 0 && !filterMood && !hasYtListenAgain && (
         <section className="px-4">
           <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-400 mb-1">
             WIEDER REINHÖREN
@@ -241,7 +289,67 @@ export const HomeView: React.FC<HomeViewProps> = ({ filterMood }) => {
             );
           }
 
-          // 3. Playlists Shelf
+          // 3. YouTube Music cards (playlists, albums, mixes, artists, songs)
+          if (shelf.type === 'cards' && shelf.items) {
+            return (
+              <section key={shelf.id} className="px-4">
+                {shelf.subtitle && (
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 mb-0.5">
+                    {shelf.subtitle}
+                  </div>
+                )}
+                <h2 className="text-xl font-black text-white tracking-tight mb-3">{shelf.title}</h2>
+                <div className="flex space-x-3 overflow-x-auto pb-2 scrollbar-none -mx-4 px-4">
+                  {shelf.items.map((card: HomeCard) => {
+                    const round = card.kind === 'artist';
+                    const isCurrent = card.kind === 'song' && currentTrack?.id === card.videoId;
+                    return (
+                      <div
+                        key={`${shelf.id}_${card.id}`}
+                        onClick={() => openCard(card)}
+                        className="w-36 flex-shrink-0 cursor-pointer group active:scale-95 transition"
+                      >
+                        <div
+                          className={`relative aspect-square overflow-hidden bg-zinc-900 shadow-md mb-2 ${
+                            round ? 'rounded-full' : 'rounded-xl'
+                          }`}
+                        >
+                          <img src={card.thumbnail} alt="" className="w-full h-full object-cover" loading="lazy" />
+                          <div
+                            className={`absolute inset-0 flex items-center justify-center transition ${
+                              openingCard === card.id ? 'bg-black/50 opacity-100' : 'bg-black/30 opacity-0 group-hover:opacity-100'
+                            }`}
+                          >
+                            <div className="w-10 h-10 rounded-full bg-red-600 flex items-center justify-center shadow-lg">
+                              {openingCard === card.id ? (
+                                <Loader2 className="w-5 h-5 text-white animate-spin" />
+                              ) : (
+                                <Play className="w-5 h-5 text-white fill-white ml-0.5" />
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                        <div
+                          className={`text-xs font-semibold line-clamp-2 ${round ? 'text-center' : ''} ${
+                            isCurrent ? 'text-red-400' : 'text-white'
+                          }`}
+                        >
+                          {card.title}
+                        </div>
+                        {card.subtitle && (
+                          <div className={`text-[11px] text-zinc-400 line-clamp-2 mt-0.5 ${round ? 'text-center' : ''}`}>
+                            {card.subtitle}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            );
+          }
+
+          // 4. Playlists Shelf
           if (shelf.type === 'playlists' && shelf.items) {
             return (
               <section key={shelf.id} className="px-4">
@@ -289,6 +397,12 @@ export const HomeView: React.FC<HomeViewProps> = ({ filterMood }) => {
 
           return null;
         })
+      )}
+
+      {!loading && loadingMore && (
+        <div className="flex justify-center py-4 text-zinc-500">
+          <Loader2 className="w-5 h-5 animate-spin text-red-600" />
+        </div>
       )}
     </div>
   );

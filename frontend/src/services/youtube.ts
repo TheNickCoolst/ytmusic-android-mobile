@@ -216,7 +216,9 @@ const authHeaders = (cookie: string): Record<string, string> => {
 };
 
 // ---------- YouTube Music (WEB_REMIX) ----------
-const musicRequest = async (endpoint: string, payload: Record<string, any>, cookie?: string | null): Promise<any> => {
+const musicRequest = async (endpoint: string, payload: Record<string, any>, cookieArg?: string | null): Promise<any> => {
+  // logged in on the phone -> every request is personalised for the account
+  const cookie = cookieArg === undefined ? getStoredCookie() : cookieArg;
   const vd = await getVisitorData();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -370,17 +372,10 @@ export const getLyricsDirect = async (
   return { lyrics: null, isSynced: false, source: null };
 };
 
-export const getRadioTracks = async (videoId: string): Promise<Track[]> => {
-  const data = await musicRequest('next', {
-    videoId,
-    playlistId: `RDAMVM${videoId}`,
-    isAudioOnly: true,
-    enablePersistentPlaylistPanel: true,
-    tunerSettingValue: 'AUTOMIX_SETTING_NORMAL',
-  });
+const parsePanel = (data: any, exclude?: string): Track[] => {
   const items = collect(data, 'playlistPanelVideoRenderer');
   const out: Track[] = [];
-  const seen = new Set<string>([videoId]);
+  const seen = new Set<string>(exclude ? [exclude] : []);
   for (const r of items) {
     const id = r?.videoId;
     if (!id || seen.has(id)) continue;
@@ -394,12 +389,18 @@ export const getRadioTracks = async (videoId: string): Promise<Track[]> => {
     const artists = artistRuns.length
       ? artistRuns.map((x: any) => x.text)
       : [byline.map((x: any) => x.text).join('').split(' • ')[0]].filter(Boolean);
+    const albumRun = byline.find(
+      (x: any) =>
+        x?.navigationEndpoint?.browseEndpoint?.browseEndpointContextSupportedConfigs?.browseEndpointContextMusicConfig
+          ?.pageType === 'MUSIC_PAGE_TYPE_ALBUM'
+    );
     const duration = runsText(r?.lengthText) || undefined;
     out.push({
       id,
       title: runsText(r?.title) || 'Unbekannt',
       artist: artists.join(', ') || 'Unbekannt',
       artists,
+      album: albumRun?.text,
       duration,
       durationSeconds: duration ? parseDuration(duration) : undefined,
       thumbnail: bestThumb(r?.thumbnail?.thumbnails, id),
@@ -407,6 +408,217 @@ export const getRadioTracks = async (videoId: string): Promise<Track[]> => {
     });
   }
   return out;
+};
+
+export const getRadioTracks = async (videoId: string): Promise<Track[]> => {
+  const data = await musicRequest('next', {
+    videoId,
+    playlistId: `RDAMVM${videoId}`,
+    isAudioOnly: true,
+    enablePersistentPlaylistPanel: true,
+    tunerSettingValue: 'AUTOMIX_SETTING_NORMAL',
+  });
+  return parsePanel(data, videoId);
+};
+
+/** Queue of any playlist / album / mix (same as tapping "play" on a card in YouTube Music). */
+export const getWatchPlaylist = async (playlistId: string, videoId?: string, params?: string): Promise<Track[]> => {
+  const data = await musicRequest('next', {
+    playlistId,
+    ...(videoId ? { videoId } : {}),
+    ...(params ? { params } : {}),
+    isAudioOnly: true,
+    enablePersistentPlaylistPanel: true,
+  });
+  return parsePanel(data);
+};
+
+// ---------- real YouTube Music start page (personalised when logged in) ----------
+export interface HomeCard {
+  kind: 'song' | 'playlist' | 'album' | 'artist';
+  id: string;
+  title: string;
+  subtitle: string;
+  thumbnail: string;
+  videoId?: string;
+  playlistId?: string;
+  playParams?: string;
+  browseId?: string;
+}
+
+export interface HomeChip {
+  title: string;
+  params: string;
+}
+
+const pageTypeOf = (ep: any): string =>
+  ep?.browseEndpoint?.browseEndpointContextSupportedConfigs?.browseEndpointContextMusicConfig?.pageType || '';
+
+const parseTwoRow = (r: any): HomeCard | null => {
+  const title = runsText(r?.title);
+  if (!title) return null;
+  const nav = r.navigationEndpoint || {};
+  const play =
+    r.thumbnailOverlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer?.playNavigationEndpoint || {};
+  const watch = nav.watchEndpoint || play.watchEndpoint;
+  const wpl = play.watchPlaylistEndpoint || nav.watchPlaylistEndpoint;
+  const browseId: string | undefined = nav.browseEndpoint?.browseId;
+  const pt = pageTypeOf(nav);
+  let kind: HomeCard['kind'] = 'playlist';
+  if (nav.watchEndpoint?.videoId) kind = 'song';
+  else if (pt.includes('ALBUM')) kind = 'album';
+  else if (pt.includes('ARTIST') || pt.includes('USER_CHANNEL')) kind = 'artist';
+  const playlistId =
+    wpl?.playlistId || watch?.playlistId || (browseId?.startsWith('VL') ? browseId.slice(2) : undefined);
+  const thumbs = r.thumbnailRenderer?.musicThumbnailRenderer?.thumbnail?.thumbnails;
+  return {
+    kind,
+    id: watch?.videoId || playlistId || browseId || title,
+    title,
+    subtitle: runsText(r.subtitle),
+    thumbnail: bestThumb(thumbs, watch?.videoId || ''),
+    videoId: kind === 'song' ? watch?.videoId : undefined,
+    playlistId,
+    playParams: wpl?.params || watch?.params,
+    browseId,
+  };
+};
+
+const chunk = <T,>(arr: T[], n: number): T[][] => {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
+  return out;
+};
+
+let shelfSeq = 0;
+const parseSections = (contents: any[]): any[] => {
+  const shelves: any[] = [];
+  for (const sec of contents || []) {
+    const sh = sec.musicCarouselShelfRenderer || sec.musicImmersiveCarouselShelfRenderer;
+    if (!sh) continue;
+    const hdr = sh.header?.musicCarouselShelfBasicHeaderRenderer || sh.header?.musicImmersiveCarouselShelfBasicHeaderRenderer;
+    const title = runsText(hdr?.title);
+    const strapline = runsText(hdr?.strapline);
+    const items: any[] = sh.contents || [];
+    const tracks = items
+      .map((c) => c.musicResponsiveListItemRenderer)
+      .filter(Boolean)
+      .map(parseListItem)
+      .filter((t): t is Track => !!t);
+    const cards = items
+      .map((c) => c.musicTwoRowItemRenderer)
+      .filter(Boolean)
+      .map(parseTwoRow)
+      .filter((c): c is HomeCard => !!c);
+    const id = `yt_${shelfSeq++}`;
+    if (tracks.length && tracks.length >= cards.length) {
+      shelves.push({
+        id,
+        title: title || 'Für dich',
+        subtitle: strapline,
+        type: 'columns_4',
+        columns: chunk(tracks, sh.numItemsPerColumn ? parseInt(sh.numItemsPerColumn, 10) || 4 : 4),
+        tracks,
+      });
+    } else if (cards.length) {
+      shelves.push({ id, title: title || 'Für dich', subtitle: strapline, type: 'cards', items: cards });
+    }
+  }
+  return shelves;
+};
+
+const continuationOf = (node: any): string | null =>
+  node?.continuations?.[0]?.nextContinuationData?.continuation || null;
+
+/** First page of the start page (or a mood/genre chip) + chips + continuation token. */
+export const getHome = async (
+  chipParams?: string
+): Promise<{ shelves: any[]; chips: HomeChip[]; continuation: string | null }> => {
+  const data = await musicRequest('browse', { browseId: 'FEmusic_home', ...(chipParams ? { params: chipParams } : {}) });
+  const sl = data?.contents?.singleColumnBrowseResultsRenderer?.tabs?.[0]?.tabRenderer?.content?.sectionListRenderer;
+  const chips: HomeChip[] = (sl?.header?.chipCloudRenderer?.chips || [])
+    .map((c: any) => c.chipCloudChipRenderer)
+    .filter(Boolean)
+    .map((c: any) => ({
+      title: runsText(c.text),
+      params: c.navigationEndpoint?.browseEndpoint?.params || '',
+    }))
+    .filter((c: HomeChip) => c.title && c.params && !/podcast/i.test(c.title));
+  return { shelves: parseSections(sl?.contents), chips, continuation: continuationOf(sl) };
+};
+
+export const getHomeContinuation = async (token: string): Promise<{ shelves: any[]; continuation: string | null }> => {
+  const vd = await getVisitorData();
+  const cookie = getStoredCookie();
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'User-Agent': WEB_UA,
+    Origin: 'https://music.youtube.com',
+    Referer: 'https://music.youtube.com/',
+    'X-YouTube-Client-Name': '67',
+    'X-YouTube-Client-Version': MUSIC_CLIENT.clientVersion,
+  };
+  if (vd) headers['X-Goog-Visitor-Id'] = vd;
+  if (cookie) Object.assign(headers, authHeaders(cookie));
+  const enc = encodeURIComponent(token);
+  const txt = await http(
+    `https://music.youtube.com/youtubei/v1/browse?ctoken=${enc}&continuation=${enc}&type=next&prettyPrint=false`,
+    { method: 'POST', headers, body: { context: { client: { ...MUSIC_CLIENT, ...(vd ? { visitorData: vd } : {}) } } } }
+  );
+  const data = JSON.parse(txt);
+  const cont = data?.continuationContents?.sectionListContinuation;
+  return { shelves: parseSections(cont?.contents), continuation: continuationOf(cont) };
+};
+
+/** Tracks to play for a start-page card. */
+export const getCardTracks = async (card: HomeCard): Promise<Track[]> => {
+  if (card.kind === 'song' && card.videoId) {
+    const radio = await getRadioTracks(card.videoId).catch(() => [] as Track[]);
+    const first: Track = {
+      id: card.videoId,
+      title: card.title,
+      artist: card.subtitle.split(' • ').pop() || card.subtitle,
+      thumbnail: card.thumbnail,
+      type: 'song',
+    };
+    return [first, ...radio];
+  }
+  if (card.playlistId) {
+    const t = await getWatchPlaylist(card.playlistId, undefined, card.playParams);
+    if (t.length) return t;
+  }
+  if (card.browseId?.startsWith('MPRE')) {
+    // album without play endpoint -> read its tracks
+    const data = await musicRequest('browse', { browseId: card.browseId });
+    const tracks = collect(data, 'musicResponsiveListItemRenderer')
+      .map(parseListItem)
+      .filter((x): x is Track => !!x)
+      .map((x) => ({ ...x, thumbnail: card.thumbnail || x.thumbnail, album: card.title }));
+    if (tracks.length) return tracks;
+  }
+  // artist / anything else -> top songs of that name
+  return searchSongs(card.title);
+};
+
+// ---------- tell YouTube Music what was played (history -> better recommendations) ----------
+const reported = new Set<string>();
+export const reportPlayback = async (videoId: string): Promise<void> => {
+  const cookie = getStoredCookie();
+  if (!cookie || reported.has(videoId)) return;
+  reported.add(videoId);
+  try {
+    const data = await musicRequest('player', { videoId }, cookie);
+    const base: string | undefined = data?.playbackTracking?.videostatsPlaybackUrl?.baseUrl;
+    if (!base) return;
+    const CPNA = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    let cpn = '';
+    for (let i = 0; i < 16; i++) cpn += CPNA[Math.floor(Math.random() * 256) & 63];
+    const url = `${base}${base.includes('?') ? '&' : '?'}ver=2&c=WEB_REMIX&cpn=${cpn}`;
+    await http(url, { method: 'GET', headers: { 'User-Agent': WEB_UA, ...authHeaders(cookie) } });
+  } catch (e) {
+    reported.delete(videoId);
+    console.warn('history report failed', e);
+  }
 };
 
 // Home feed built from music searches (used when the Mac server is not reachable)

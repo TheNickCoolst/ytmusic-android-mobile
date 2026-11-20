@@ -190,7 +190,16 @@ export const api = {
   },
 
   // Content & Feed
-  async getHomeFeed(country = 'DE'): Promise<{ shelves: any[] }> {
+  async getHomeFeed(country = 'DE', chipParams?: string): Promise<{ shelves: any[]; chips?: yt.HomeChip[]; continuation?: string | null }> {
+    // APK: the real YouTube Music start page, personalised with the phone's Google login
+    if (yt.isNativeApp()) {
+      try {
+        const h = await yt.getHome(chipParams);
+        if (h.shelves.length) return h;
+      } catch (e) {
+        console.warn('YouTube Music home failed, falling back', e);
+      }
+    }
     try {
       return await withFallback(
         async (signal) => {
@@ -237,6 +246,14 @@ export const api = {
         ]
       };
     }
+  },
+
+  async getHomeMore(token: string): Promise<{ shelves: any[]; continuation: string | null }> {
+    return yt.getHomeContinuation(token);
+  },
+
+  async getCardTracks(card: yt.HomeCard): Promise<Track[]> {
+    return yt.getCardTracks(card);
   },
 
   async getPlaylist(playlistId: string): Promise<any> {

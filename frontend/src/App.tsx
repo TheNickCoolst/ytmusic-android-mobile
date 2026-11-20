@@ -27,6 +27,7 @@ const PlaybackErrorBanner: React.FC = () => {
 const AppContent: React.FC = () => {
   const [activeTab, setActiveTab] = useState<NavTab>('home');
   const [activeMoodFilter, setActiveMoodFilter] = useState<string | null>(null);
+  const [moodChips, setMoodChips] = useState<string[] | null>(null);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [userProfile, setUserProfile] = useState<UserProfile>({
@@ -72,6 +73,7 @@ const AppContent: React.FC = () => {
         onOpenSearch={() => setIsSearchOpen(true)}
         activeFilter={activeMoodFilter}
         onSelectFilter={handleSelectFilter}
+        chips={moodChips}
       />
 
       {/* Main View Area */}
@@ -93,7 +95,11 @@ const AppContent: React.FC = () => {
           </div>
         ) : (
           <>
-            {activeTab === 'home' && <HomeView filterMood={activeMoodFilter} />}
+            {activeTab === 'home' && <HomeView
+            filterMood={activeMoodFilter}
+            onChips={setMoodChips}
+            accountKey={userProfile.isLoggedIn ? userProfile.name : 'guest'}
+          />}
             {activeTab === 'explore' && <ExploreView />}
             {activeTab === 'library' && (
               <LibraryView

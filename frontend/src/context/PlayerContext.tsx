@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { Track, Playlist, RepeatMode, EqualizerPreset } from '../types';
 import { api, isServerMarkedDown } from '../services/api';
-import { isNativeApp } from '../services/youtube';
+import { isNativeApp, reportPlayback } from '../services/youtube';
 import { prepareTrack, planMix, MixPlan, TrackAnalysis } from '../services/dj';
 import { mediaControls } from '../services/mediaControls';
 
@@ -1167,6 +1167,17 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setQueueIndex(prevIdx);
     playTrack(queue[prevIdx], queue);
   };
+
+  // Logged in: report plays to YouTube Music (history -> personal recommendations), like the real app
+  useEffect(() => {
+    const id = currentTrack?.id;
+    if (!id || !isNativeApp()) return;
+    const t = setTimeout(() => {
+      const a = audioRef.current;
+      if (currentTrackIdRef.current === id && a && !a.paused) reportPlayback(id);
+    }, 10000);
+    return () => clearTimeout(t);
+  }, [currentTrack?.id]);
 
   // ---- system "now playing" notification (status bar, Samsung quick panel, lock screen) ----
   const publishMediaState = (override?: { position?: number; playing?: boolean }) => {

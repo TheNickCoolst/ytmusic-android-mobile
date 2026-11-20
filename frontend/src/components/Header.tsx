@@ -8,6 +8,7 @@ interface HeaderProps {
   onOpenSearch: () => void;
   activeFilter: string | null;
   onSelectFilter: (filter: string) => void;
+  chips?: string[] | null;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -16,8 +17,9 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenSearch,
   activeFilter,
   onSelectFilter,
+  chips: liveChips,
 }) => {
-  const chips = [
+  const defaultChips = [
     'Energieschub',
     'Entspannung',
     'Workout',
@@ -25,6 +27,8 @@ export const Header: React.FC<HeaderProps> = ({
     'Fokus',
     'Party',
   ];
+  // real YouTube Music mood chips once the start page is loaded
+  const chips = liveChips && liveChips.length ? liveChips : defaultChips;
 
   return (
     <div className="sticky top-0 z-30 bg-[#030303]/95 backdrop-blur-xl border-b border-white/5 select-none">
