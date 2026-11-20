@@ -190,6 +190,17 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               </button>
             </form>
 
+            {/* Server Connection Info for Android APK */}
+            <div className="mt-4 pt-3 border-t border-white/5">
+              <div className="text-[11px] font-semibold text-zinc-400 mb-1 flex items-center justify-between">
+                <span>Server-Adresse (Android APK):</span>
+                <span className="text-emerald-400 text-[10px]">192.168.178.183:8000</span>
+              </div>
+              <p className="text-[10px] text-zinc-500">
+                Die APK verbindet sich automatisch mit deinem Computer im selben WLAN.
+              </p>
+            </div>
+
             {/* How-To Accordion */}
             <div className="mt-5 border-t border-white/5 pt-4">
               <button
