@@ -1,63 +1,111 @@
 import React from 'react';
-import { User, ShieldCheck, Download, Smartphone } from 'lucide-react';
+import { User, Search, Cast, CheckCircle2 } from 'lucide-react';
 import { UserProfile } from '../services/api';
 
 interface HeaderProps {
   userProfile: UserProfile;
   onOpenAuth: () => void;
+  onOpenSearch: () => void;
+  activeFilter: string | null;
+  onSelectFilter: (filter: string) => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ userProfile, onOpenAuth }) => {
+export const Header: React.FC<HeaderProps> = ({
+  userProfile,
+  onOpenAuth,
+  onOpenSearch,
+  activeFilter,
+  onSelectFilter,
+}) => {
+  const chips = [
+    'Energieschub',
+    'Entspannung',
+    'Workout',
+    'Unterwegs',
+    'Fokus',
+    'Party',
+  ];
+
   return (
-    <header className="sticky top-0 z-30 bg-[#030303]/90 backdrop-blur-md px-4 py-3 border-b border-white/5 flex items-center justify-between">
-      {/* Brand Logo */}
-      <div className="flex items-center space-x-2.5">
-        <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-red-600 to-red-500 flex items-center justify-center shadow-lg shadow-red-600/30">
-          <div className="w-0 h-0 border-y-[6px] border-y-transparent border-l-[10px] border-l-white ml-0.5"></div>
-        </div>
-        <div className="flex items-baseline space-x-1">
-          <span className="font-black text-xl tracking-tight text-white">Music</span>
-          <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-red-600/20 text-red-400 border border-red-500/30">
-            Ad-Free
+    <div className="sticky top-0 z-30 bg-[#030303]/95 backdrop-blur-xl border-b border-white/5 select-none">
+      {/* Top Main Bar */}
+      <div className="flex items-center justify-between px-4 pt-3 pb-2">
+        {/* Brand: YouTube Music 1:1 Logo */}
+        <div className="flex items-center space-x-1.5 cursor-pointer">
+          <div className="w-6 h-6 rounded-full bg-red-600 flex items-center justify-center shadow-md shadow-red-600/40">
+            <div className="w-0 h-0 border-y-[4px] border-y-transparent border-l-[7px] border-l-white ml-0.5"></div>
+          </div>
+          <span className="font-bold text-lg tracking-tight text-white font-sans">
+            Music
           </span>
+          <span className="text-[9px] font-bold text-red-500 bg-red-500/10 px-1 py-0.2 rounded border border-red-500/20 ml-0.5">
+            550 PRO
+          </span>
+        </div>
+
+        {/* Action icons right */}
+        <div className="flex items-center space-x-3 text-white">
+          {/* Cast button */}
+          <button
+            className="p-1.5 text-zinc-300 hover:text-white active:scale-90 transition"
+            title="Auf Gerät übertragen"
+            onClick={() => alert('Chromecast / Audio-Ausgabe ist im Android-System aktiv.')}
+          >
+            <Cast className="w-5 h-5" />
+          </button>
+
+          {/* Search magnifying glass */}
+          <button
+            onClick={onOpenSearch}
+            className="p-1.5 text-zinc-300 hover:text-white active:scale-90 transition"
+            title="Suchen"
+          >
+            <Search className="w-5 h-5" />
+          </button>
+
+          {/* User Avatar Circle */}
+          <button
+            onClick={onOpenAuth}
+            className="relative flex items-center justify-center active:scale-90 transition ml-0.5"
+            title={userProfile.isLoggedIn ? userProfile.name : "Google Account"}
+          >
+            {userProfile.isLoggedIn && userProfile.avatar ? (
+              <img
+                src={userProfile.avatar}
+                alt={userProfile.name}
+                className="w-7 h-7 rounded-full object-cover border border-emerald-400"
+              />
+            ) : (
+              <div className="w-7 h-7 rounded-full bg-zinc-800 border border-white/20 flex items-center justify-center text-zinc-300">
+                <User className="w-4 h-4" />
+              </div>
+            )}
+            {userProfile.isLoggedIn && (
+              <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-500 rounded-full border border-[#030303]" />
+            )}
+          </button>
         </div>
       </div>
 
-      {/* Header Actions */}
-      <div className="flex items-center space-x-2">
-        {/* Android APK Download button */}
-        <a
-          href="/api/download-apk"
-          download="ytmusic-mobile.apk"
-          className="flex items-center space-x-1 px-2.5 py-1.5 rounded-full bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-xs font-semibold text-emerald-400 transition active:scale-95"
-          title="Android APK herunterladen"
-        >
-          <Smartphone className="w-3.5 h-3.5" />
-          <span>APK</span>
-        </a>
-
-        {/* User Account / Login Button */}
-        <button
-          onClick={onOpenAuth}
-          className="flex items-center space-x-2 pl-2 pr-3 py-1.5 rounded-full bg-white/10 hover:bg-white/15 transition border border-white/10 active:scale-95"
-          title={userProfile.isLoggedIn ? userProfile.name : "Google Account verbinden"}
-        >
-          {userProfile.isLoggedIn && userProfile.avatar ? (
-            <img
-              src={userProfile.avatar}
-              alt={userProfile.name}
-              className="w-6 h-6 rounded-full object-cover border border-red-500"
-            />
-          ) : (
-            <div className="w-6 h-6 rounded-full bg-red-600/30 flex items-center justify-center text-red-400">
-              <User className="w-3.5 h-3.5" />
-            </div>
-          )}
-          <span className="text-xs font-medium text-white max-w-[100px] truncate">
-            {userProfile.isLoggedIn ? userProfile.name.split(' ')[0] : 'Anmelden'}
-          </span>
-        </button>
+      {/* Horizontally scrolling Mood / Activity Chips (1:1 YTM) */}
+      <div className="flex items-center space-x-2 px-4 pb-2.5 overflow-x-auto scrollbar-none">
+        {chips.map((chip) => {
+          const isSelected = activeFilter === chip;
+          return (
+            <button
+              key={chip}
+              onClick={() => onSelectFilter(chip)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all active:scale-95 ${
+                isSelected
+                  ? 'bg-white text-black font-semibold shadow-md'
+                  : 'bg-[#212121] text-zinc-200 hover:bg-[#2e2e2e] border border-white/5'
+              }`}
+            >
+              {chip}
+            </button>
+          );
+        })}
       </div>
-    </header>
+    </div>
   );
 };

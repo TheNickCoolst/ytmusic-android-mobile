@@ -364,6 +364,211 @@ async def unlike_track_on_youtube(payload: Dict[str, str] = Body(...)):
 
 
 # ==========================================
+# HOME & EXPLORE SHELVES (1:1 YTM LAYOUT)
+# ==========================================
+
+@app.get("/api/home")
+async def get_home_feed(country: str = "DE"):
+    """
+    Get 1:1 authentic YouTube Music home shelves:
+    - Quick picks (4-track vertical columns)
+    - Trending charts (ranked 1-10)
+    - Listen again / Forgotten favorites
+    - Curated mood mixes & playlists
+    """
+    global yt
+    if not yt:
+        init_yt_client()
+
+    shelves = []
+    all_tracks = []
+
+    # 1. Fetch Trending Charts (Ranked)
+    trending_tracks = []
+    if yt:
+        try:
+            charts = yt.get_charts(country=country)
+            video_charts = charts.get("videos", [])
+            if video_charts and len(video_charts) > 0 and video_charts[0].get("playlistId"):
+                pl = yt.get_playlist(video_charts[0]["playlistId"], limit=20)
+                for i, t in enumerate(pl.get("tracks", [])):
+                    vid = t.get("videoId")
+                    if not vid:
+                        continue
+                    artists = [a.get("name") for a in t.get("artists", []) if a.get("name")]
+                    track_obj = {
+                        "id": vid,
+                        "title": t.get("title"),
+                        "artist": ", ".join(artists) if artists else "Artist",
+                        "artists": artists,
+                        "thumbnail": extract_thumbnail(t.get("thumbnails", [])),
+                        "duration": format_duration(t.get("duration_seconds")),
+                        "durationSeconds": t.get("duration_seconds"),
+                        "rank": i + 1,
+                        "isCached": get_cached_file(vid) is not None
+                    }
+                    trending_tracks.append(track_obj)
+                    all_tracks.append(track_obj)
+        except Exception as e:
+            print(f"Error fetching trending charts: {e}")
+
+    # Fallback trending if empty
+    if not trending_tracks:
+        curated_ids = [
+            ("J7p4bzqLvCw", "Blinding Lights", "The Weeknd", "3:22"),
+            ("4EQkYVtE-28", "Circles", "Post Malone", "3:35"),
+            ("nujn6wbr-e8", "As It Was", "Harry Styles", "2:47"),
+            ("XfEMj-z3TtA", "STAY", "The Kid LAROI, Justin Bieber", "2:21"),
+            ("k2qgadSvNyU", "New Rules", "Dua Lipa", "3:44"),
+            ("OPf0YbXqDm0", "Uptown Funk", "Mark Ronson ft. Bruno Mars", "4:30"),
+            ("2Vv-BfVoq4g", "Perfect", "Ed Sheeran", "4:23"),
+            ("dQw4w9WgXcQ", "Never Gonna Give You Up", "Rick Astley", "3:34"),
+        ]
+        for i, (vid, title, artist, dur) in enumerate(curated_ids):
+            t_obj = {
+                "id": vid,
+                "title": title,
+                "artist": artist,
+                "artists": [artist],
+                "thumbnail": f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg",
+                "duration": dur,
+                "durationSeconds": 200,
+                "rank": i + 1,
+                "isCached": get_cached_file(vid) is not None
+            }
+            trending_tracks.append(t_obj)
+            all_tracks.append(t_obj)
+
+    # 2. Build Quick Picks in 4-track vertical columns (The classic YTM Mobile experience)
+    # 4 tracks per column, e.g. 3 columns = 12 tracks
+    quick_picks_raw = list(trending_tracks)
+    if len(quick_picks_raw) < 16 and yt:
+        try:
+            extra = yt.search("Top Hits 2026", filter="songs", limit=12)
+            for r in extra:
+                vid = r.get("videoId")
+                if vid and not any(x["id"] == vid for x in quick_picks_raw):
+                    artists = [a.get("name") for a in r.get("artists", []) if a.get("name")]
+                    quick_picks_raw.append({
+                        "id": vid,
+                        "title": r.get("title"),
+                        "artist": ", ".join(artists) if artists else "Artist",
+                        "artists": artists,
+                        "thumbnail": extract_thumbnail(r.get("thumbnails", [])),
+                        "duration": r.get("duration") or "3:20",
+                        "isCached": get_cached_file(vid) is not None
+                    })
+        except Exception:
+            pass
+
+    # Group into columns of 4
+    columns = []
+    chunk_size = 4
+    for i in range(0, min(len(quick_picks_raw), 16), chunk_size):
+        chunk = quick_picks_raw[i:i + chunk_size]
+        if chunk:
+            columns.append(chunk)
+
+    shelves.append({
+        "id": "quick_picks",
+        "title": "Schnellauswahl",
+        "subtitle": "STARTET EINE RADIOSTATION",
+        "type": "columns_4",
+        "columns": columns,
+        "tracks": quick_picks_raw[:16]
+    })
+
+    # 3. Trending Shelf (Ranked 1..N)
+    shelves.append({
+        "id": "trending",
+        "title": "Charts & Trends",
+        "subtitle": "TOP 20 DEUTSCHLAND",
+        "type": "rankings",
+        "items": trending_tracks
+    })
+
+    # 4. Featured Mixes & Playlists
+    featured_playlists = [
+        {
+            "id": "RDCLAK5uy_m0wlRoNn5iCTTgBedfoOQ19Jq9P3XTLIA",
+            "title": "Feel-Good Pop & Rock",
+            "subtitle": "YouTube Music Mix",
+            "thumbnail": "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=300&auto=format&fit=crop&q=80",
+            "query": "Feel good pop rock hits"
+        },
+        {
+            "id": "RDCLAK5uy_k1Wu8QbZASiGVqr1wmie9NIYo38aBqscQ",
+            "title": "Deutschrap Top Hits",
+            "subtitle": "Ayliva, Luciano, Apache 207",
+            "thumbnail": "https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?w=300&auto=format&fit=crop&q=80",
+            "query": "Deutschrap Top Hits"
+        },
+        {
+            "id": "RDCLAK5uy_k8d0XHQgAWWSZe7l7tUp0xLmEV_ncPxck",
+            "title": "Gym & Workout Hardstyle",
+            "subtitle": "Bass & Motivation",
+            "thumbnail": "https://images.unsplash.com/photo-1534438327276-14e5300c3a48?w=300&auto=format&fit=crop&q=80",
+            "query": "Gym workout motivation high energy"
+        },
+        {
+            "id": "RDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA",
+            "title": "Chill & Lofi Beats",
+            "subtitle": "Zum Abschalten & Lernen",
+            "thumbnail": "https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=300&auto=format&fit=crop&q=80",
+            "query": "Chill lofi study beats"
+        }
+    ]
+
+    shelves.append({
+        "id": "mixes",
+        "title": "Empfohlene Mixe für dich",
+        "subtitle": "PERSONALISIERT",
+        "type": "playlists",
+        "items": featured_playlists
+    })
+
+    return {"shelves": shelves}
+
+
+@app.get("/api/playlist/{playlist_id}")
+async def get_playlist_tracks(playlist_id: str):
+    """Get tracks of any YouTube Music playlist"""
+    global yt
+    if not yt:
+        init_yt_client()
+
+    try:
+        pl = yt.get_playlist(playlist_id, limit=50)
+        tracks = []
+        for t in pl.get("tracks", []):
+            vid = t.get("videoId")
+            if not vid:
+                continue
+            artists = [a.get("name") for a in t.get("artists", []) if a.get("name")]
+            tracks.append({
+                "id": vid,
+                "title": t.get("title"),
+                "artist": ", ".join(artists) if artists else "Artist",
+                "artists": artists,
+                "thumbnail": extract_thumbnail(t.get("thumbnails", [])),
+                "duration": format_duration(t.get("duration_seconds")),
+                "durationSeconds": t.get("duration_seconds"),
+                "isCached": get_cached_file(vid) is not None
+            })
+        return {
+            "id": playlist_id,
+            "title": pl.get("title", "Playlist"),
+            "description": pl.get("description"),
+            "thumbnail": extract_thumbnail(pl.get("thumbnails", [])),
+            "trackCount": len(tracks),
+            "tracks": tracks
+        }
+    except Exception as e:
+        print(f"Error loading playlist {playlist_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==========================================
 # SEARCH & EXPLORE
 # ==========================================
 

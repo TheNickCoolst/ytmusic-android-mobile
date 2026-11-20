@@ -13,6 +13,8 @@ import { api, UserProfile } from './services/api';
 
 const AppContent: React.FC = () => {
   const [activeTab, setActiveTab] = useState<NavTab>('home');
+  const [activeMoodFilter, setActiveMoodFilter] = useState<string | null>(null);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [userProfile, setUserProfile] = useState<UserProfile>({
     isLoggedIn: false,
@@ -23,37 +25,73 @@ const AppContent: React.FC = () => {
     api.getAuthStatus().then(setUserProfile).catch(console.error);
   }, []);
 
+  const handleSelectFilter = (filter: string) => {
+    if (activeMoodFilter === filter) {
+      setActiveMoodFilter(null);
+    } else {
+      setActiveMoodFilter(filter);
+      setActiveTab('home');
+      setIsSearchOpen(false);
+    }
+  };
+
+  const handleTabChange = (tab: NavTab) => {
+    setActiveTab(tab);
+    setIsSearchOpen(false);
+  };
+
   return (
-    <div className="flex flex-col h-screen w-full bg-[#030303] text-white overflow-hidden select-none">
-      {/* Mobile Header */}
+    <div className="flex flex-col h-screen w-full bg-[#030303] text-white overflow-hidden select-none font-sans">
+      {/* 1:1 Standard YouTube Music Header */}
       <Header
         userProfile={userProfile}
         onOpenAuth={() => setIsAuthOpen(true)}
+        onOpenSearch={() => setIsSearchOpen(true)}
+        activeFilter={activeMoodFilter}
+        onSelectFilter={handleSelectFilter}
       />
 
-      {/* Main Content Scrollable Area */}
+      {/* Main View Area */}
       <main className="flex-1 overflow-y-auto overscroll-contain">
-        {activeTab === 'home' && <HomeView />}
-        {activeTab === 'explore' && <ExploreView />}
-        {activeTab === 'search' && <SearchView />}
-        {activeTab === 'library' && (
-          <LibraryView
-            userProfile={userProfile}
-            onOpenAuth={() => setIsAuthOpen(true)}
-          />
+        {isSearchOpen ? (
+          <div className="relative">
+            <div className="flex items-center justify-between px-4 pt-2">
+              <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider">
+                Suche
+              </span>
+              <button
+                onClick={() => setIsSearchOpen(false)}
+                className="text-xs text-red-400 font-semibold px-2 py-1"
+              >
+                Schließen
+              </button>
+            </div>
+            <SearchView />
+          </div>
+        ) : (
+          <>
+            {activeTab === 'home' && <HomeView filterMood={activeMoodFilter} />}
+            {activeTab === 'explore' && <ExploreView />}
+            {activeTab === 'library' && (
+              <LibraryView
+                userProfile={userProfile}
+                onOpenAuth={() => setIsAuthOpen(true)}
+              />
+            )}
+          </>
         )}
       </main>
 
-      {/* Bottom Mini Player */}
+      {/* Mini Player */}
       <MiniPlayer />
 
-      {/* Bottom Navigation */}
+      {/* 3-Tab Bottom Navigation (1:1 YTM) */}
       <Navigation
         activeTab={activeTab}
-        onTabChange={setActiveTab}
+        onTabChange={handleTabChange}
       />
 
-      {/* Fullscreen Now Playing Modal */}
+      {/* Fullscreen Now Playing Modal (1:1 YTM + 550 Upgrades) */}
       <NowPlayingModal />
 
       {/* Google Account Authentication Modal */}

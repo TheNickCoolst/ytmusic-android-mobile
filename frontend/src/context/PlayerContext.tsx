@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
-import { Track, Playlist, RepeatMode } from '../types';
+import { Track, Playlist, RepeatMode, EqualizerPreset } from '../types';
 import { api } from '../services/api';
 
 interface PlayerContextType {
@@ -17,9 +17,26 @@ interface PlayerContextType {
   autoPlayRadio: boolean;
   isPlayerExpanded: boolean;
   likedTracks: Track[];
+  dislikedTrackIds: string[];
   playlists: Playlist[];
   history: Track[];
   sleepTimerRemaining: number | null; // in seconds
+
+  // Video / Audio mode toggle
+  isVideoMode: boolean;
+  setIsVideoMode: (video: boolean) => void;
+
+  // 550 Sound Equalizer & Bass Boost
+  audioQuality: 'high' | 'normal';
+  setAudioQuality: (q: 'high' | 'normal') => void;
+  bassGain: number;
+  midGain: number;
+  trebleGain: number;
+  equalizerPreset: EqualizerPreset;
+  setEqualizerPreset: (preset: EqualizerPreset) => void;
+  setBassGain: (gain: number) => void;
+  setMidGain: (gain: number) => void;
+  setTrebleGain: (gain: number) => void;
 
   // Controls
   playTrack: (track: Track, newQueue?: Track[]) => void;
@@ -42,6 +59,8 @@ interface PlayerContextType {
   // Library actions
   toggleLike: (track: Track) => void;
   isLiked: (trackId: string) => boolean;
+  toggleDislike: (trackId: string) => void;
+  isDisliked: (trackId: string) => boolean;
   createPlaylist: (name: string, description?: string) => void;
   addToPlaylist: (playlistId: string, track: Track) => void;
   removeFromPlaylist: (playlistId: string, trackId: string) => void;
@@ -55,8 +74,10 @@ const PlayerContext = createContext<PlayerContextType | null>(null);
 
 const STORAGE_KEYS = {
   LIKED: 'ytmusic_liked_tracks',
+  DISLIKED: 'ytmusic_disliked_ids',
   PLAYLISTS: 'ytmusic_playlists',
   HISTORY: 'ytmusic_history',
+  EQ: 'ytmusic_eq_settings',
 };
 
 export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -73,11 +94,28 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [queueIndex, setQueueIndex] = useState<number>(-1);
   const [autoPlayRadio, setAutoPlayRadio] = useState<boolean>(true);
   const [isPlayerExpanded, setIsPlayerExpanded] = useState<boolean>(false);
+  const [isVideoMode, setIsVideoMode] = useState<boolean>(false);
+  const [audioQuality, setAudioQuality] = useState<'high' | 'normal'>('high');
+
+  // 550 Sound Equalizer State
+  const [bassGain, setBassGainState] = useState<number>(4); // +4dB default warm punch
+  const [midGain, setMidGainState] = useState<number>(1);
+  const [trebleGain, setTrebleGainState] = useState<number>(2);
+  const [equalizerPreset, setEqualizerPresetState] = useState<EqualizerPreset>('bass_boost');
 
   // Library state
   const [likedTracks, setLikedTracks] = useState<Track[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.LIKED);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [dislikedTrackIds, setDislikedTrackIds] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.DISLIKED);
       return saved ? JSON.parse(saved) : [];
     } catch {
       return [];
@@ -107,12 +145,15 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const sleepTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const bassFilterRef = useRef<BiquadFilterNode | null>(null);
+  const midFilterRef = useRef<BiquadFilterNode | null>(null);
+  const trebleFilterRef = useRef<BiquadFilterNode | null>(null);
 
   // Initialize Audio Element
   useEffect(() => {
     const audio = new Audio();
     audio.preload = 'auto';
-    // Enable background playback on iOS & mobile browsers
     audio.setAttribute('playsinline', 'true');
     (audio as any).playsInline = true;
     audio.crossOrigin = 'anonymous';
@@ -151,10 +192,114 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
   }, []);
 
-  // Save to LocalStorage
+  // Initialize Web Audio API Equalizer on first user playback
+  const initEqualizer = () => {
+    if (audioContextRef.current || !audioRef.current) return;
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const source = ctx.createMediaElementSource(audioRef.current);
+
+      // Low Shelf Filter (Bass: 60Hz - 250Hz)
+      const bass = ctx.createBiquadFilter();
+      bass.type = 'lowshelf';
+      bass.frequency.value = 150;
+      bass.gain.value = bassGain;
+
+      // Peaking Filter (Mids: 1kHz)
+      const mid = ctx.createBiquadFilter();
+      mid.type = 'peaking';
+      mid.frequency.value = 1000;
+      mid.Q.value = 1.0;
+      mid.gain.value = midGain;
+
+      // High Shelf Filter (Treble: 3.5kHz - 16kHz)
+      const treble = ctx.createBiquadFilter();
+      treble.type = 'highshelf';
+      treble.frequency.value = 4000;
+      treble.gain.value = trebleGain;
+
+      source.connect(bass);
+      bass.connect(mid);
+      mid.connect(treble);
+      treble.connect(ctx.destination);
+
+      audioContextRef.current = ctx;
+      bassFilterRef.current = bass;
+      midFilterRef.current = mid;
+      trebleFilterRef.current = treble;
+    } catch (e) {
+      console.warn('Web Audio Equalizer init skipped (CORS/Browser):', e);
+    }
+  };
+
+  const setBassGain = (val: number) => {
+    setBassGainState(val);
+    if (bassFilterRef.current) {
+      bassFilterRef.current.gain.value = val;
+    }
+  };
+
+  const setMidGain = (val: number) => {
+    setMidGainState(val);
+    if (midFilterRef.current) {
+      midFilterRef.current.gain.value = val;
+    }
+  };
+
+  const setTrebleGain = (val: number) => {
+    setTrebleGainState(val);
+    if (trebleFilterRef.current) {
+      trebleFilterRef.current.gain.value = val;
+    }
+  };
+
+  const setEqualizerPreset = (preset: EqualizerPreset) => {
+    setEqualizerPresetState(preset);
+    switch (preset) {
+      case 'bass_boost':
+        setBassGain(8);
+        setMidGain(1);
+        setTrebleGain(3);
+        break;
+      case 'vocal':
+        setBassGain(0);
+        setMidGain(5);
+        setTrebleGain(2);
+        break;
+      case 'dance':
+        setBassGain(6);
+        setMidGain(0);
+        setTrebleGain(5);
+        break;
+      case 'rock':
+        setBassGain(5);
+        setMidGain(2);
+        setTrebleGain(4);
+        break;
+      case 'clarity':
+        setBassGain(-1);
+        setMidGain(2);
+        setTrebleGain(6);
+        break;
+      case 'flat':
+      default:
+        setBassGain(0);
+        setMidGain(0);
+        setTrebleGain(0);
+        break;
+    }
+  };
+
+  // LocalStorage sync
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.LIKED, JSON.stringify(likedTracks));
   }, [likedTracks]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.DISLIKED, JSON.stringify(dislikedTrackIds));
+  }, [dislikedTrackIds]);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.PLAYLISTS, JSON.stringify(playlists));
@@ -249,14 +394,19 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           position: Math.min(pos, dur),
         });
       } catch (e) {
-        // Ignored if position state is temporarily out of sync
+        // Ignored
       }
     }
   };
 
-  // Play track implementation
+  // Play track
   const playTrack = async (track: Track, newQueue?: Track[]) => {
     if (!audioRef.current) return;
+
+    initEqualizer();
+    if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
+      audioContextRef.current.resume().catch(console.error);
+    }
 
     setCurrentTrack(track);
     setIsBuffering(true);
@@ -290,10 +440,10 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       await audioRef.current.play();
       setIsPlaying(true);
     } catch (err) {
-      console.error('Play call rejected (e.g. autoplay restriction):', err);
+      console.error('Play call error:', err);
     }
 
-    // Prefetch radio/related tracks for continuous playback if queue is short
+    // Prefetch radio
     if (autoPlayRadio && (!newQueue || newQueue.length <= 1)) {
       try {
         const radioTracks = await api.getRadio(track.id);
@@ -325,7 +475,6 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setQueueIndex(0);
       playTrack(queue[0], queue);
     } else if (autoPlayRadio && currentTrack) {
-      // Auto-fetch song radio when queue ends so music never stops!
       try {
         const radioTracks = await api.getRadio(currentTrack.id);
         if (radioTracks.length > 0) {
@@ -384,7 +533,6 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const previousTrack = () => {
     if (!audioRef.current || queue.length === 0) return;
-    // If playing more than 3 seconds, restart current song
     if (audioRef.current.currentTime > 3) {
       audioRef.current.currentTime = 0;
       return;
@@ -457,20 +605,35 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   };
 
-  // Library actions
+  // Likes & Dislikes
   const toggleLike = (track: Track) => {
-    setLikedTracks((prev) => {
-      const exists = prev.some((t) => t.id === track.id);
-      if (exists) {
-        return prev.filter((t) => t.id !== track.id);
-      } else {
-        return [track, ...prev];
-      }
-    });
+    const exists = likedTracks.some((t) => t.id === track.id);
+    if (exists) {
+      setLikedTracks((prev) => prev.filter((t) => t.id !== track.id));
+      api.unlikeTrackOnYouTube(track.id);
+    } else {
+      setLikedTracks((prev) => [track, ...prev]);
+      setDislikedTrackIds((prev) => prev.filter((id) => id !== track.id));
+      api.likeTrackOnYouTube(track.id);
+    }
   };
 
   const isLiked = (trackId: string) => {
     return likedTracks.some((t) => t.id === trackId);
+  };
+
+  const toggleDislike = (trackId: string) => {
+    if (dislikedTrackIds.includes(trackId)) {
+      setDislikedTrackIds((prev) => prev.filter((id) => id !== trackId));
+    } else {
+      setDislikedTrackIds((prev) => [...prev, trackId]);
+      setLikedTracks((prev) => prev.filter((t) => t.id !== trackId));
+      api.unlikeTrackOnYouTube(trackId);
+    }
+  };
+
+  const isDisliked = (trackId: string) => {
+    return dislikedTrackIds.includes(trackId);
   };
 
   const createPlaylist = (name: string, description?: string) => {
@@ -543,9 +706,22 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         autoPlayRadio,
         isPlayerExpanded,
         likedTracks,
+        dislikedTrackIds,
         playlists,
         history,
         sleepTimerRemaining,
+        isVideoMode,
+        setIsVideoMode,
+        audioQuality,
+        setAudioQuality,
+        bassGain,
+        midGain,
+        trebleGain,
+        equalizerPreset,
+        setEqualizerPreset,
+        setBassGain,
+        setMidGain,
+        setTrebleGain,
         playTrack,
         togglePlay,
         pause,
@@ -564,6 +740,8 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         setIsPlayerExpanded,
         toggleLike,
         isLiked,
+        toggleDislike,
+        isDisliked,
         createPlaylist,
         addToPlaylist,
         removeFromPlaylist,

@@ -9,6 +9,7 @@ export interface Track {
   thumbnail: string;
   type?: string;
   isCached?: boolean;
+  rank?: number;
 }
 
 export interface Playlist {
@@ -21,6 +22,7 @@ export interface Playlist {
 }
 
 export type RepeatMode = 'off' | 'all' | 'one';
+export type EqualizerPreset = 'flat' | 'bass_boost' | 'vocal' | 'dance' | 'rock' | 'clarity';
 
 export interface MoodCategory {
   id: string;
@@ -33,4 +35,14 @@ export interface MoodCategory {
 export interface LyricsResponse {
   lyrics: string | null;
   source: string | null;
+}
+
+export interface HomeShelf {
+  id: string;
+  title: string;
+  subtitle?: string;
+  type: 'columns_4' | 'rankings' | 'playlists' | 'horizontal_cards';
+  columns?: Track[][];
+  items?: any[];
+  tracks?: Track[];
 }

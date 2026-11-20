@@ -83,7 +83,19 @@ export const api = {
     }
   },
 
-  // Search & Content
+  // Content & Feed
+  async getHomeFeed(country = 'DE'): Promise<{ shelves: any[] }> {
+    const res = await fetch(`${API_BASE}/home?country=${country}`);
+    if (!res.ok) throw new Error('Home feed failed');
+    return await res.json();
+  },
+
+  async getPlaylist(playlistId: string): Promise<any> {
+    const res = await fetch(`${API_BASE}/playlist/${playlistId}`);
+    if (!res.ok) throw new Error('Playlist failed');
+    return await res.json();
+  },
+
   async search(query: string, filter?: string): Promise<Track[]> {
     const params = new URLSearchParams({ q: query });
     if (filter && filter !== 'all') {
