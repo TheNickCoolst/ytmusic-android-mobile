@@ -4,6 +4,7 @@ const config: CapacitorConfig = {
   appId: 'com.ytmusic.mobile',
   appName: 'YT Music',
   webDir: 'dist',
+  loggingBehavior: 'none',
   backgroundColor: '#030303',
   server: {
     androidScheme: 'http',

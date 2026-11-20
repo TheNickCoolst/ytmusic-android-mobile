@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { PlayerProvider } from './context/PlayerContext';
+import { PlayerProvider, usePlayer } from './context/PlayerContext';
 import { Header } from './components/Header';
 import { Navigation, NavTab } from './components/Navigation';
 import { MiniPlayer } from './components/MiniPlayer';
@@ -10,6 +10,19 @@ import { SearchView } from './components/SearchView';
 import { ExploreView } from './components/ExploreView';
 import { LibraryView } from './components/LibraryView';
 import { api, UserProfile } from './services/api';
+
+const PlaybackErrorBanner: React.FC = () => {
+  const { playbackError, clearPlaybackError } = usePlayer();
+  if (!playbackError) return null;
+  return (
+    <div
+      onClick={clearPlaybackError}
+      className="mx-3 mb-2 rounded-xl bg-red-600/90 px-4 py-3 text-sm text-white shadow-lg"
+    >
+      ⚠️ {playbackError}
+    </div>
+  );
+};
 
 const AppContent: React.FC = () => {
   const [activeTab, setActiveTab] = useState<NavTab>('home');
@@ -91,6 +104,8 @@ const AppContent: React.FC = () => {
           </>
         )}
       </main>
+
+      <PlaybackErrorBanner />
 
       {/* Mini Player */}
       <MiniPlayer />

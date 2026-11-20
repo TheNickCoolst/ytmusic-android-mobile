@@ -1,4 +1,30 @@
 import { Track, MoodCategory, LyricsResponse } from '../types';
+import * as yt from './youtube';
+
+// ---- Mac server reachability (the app works without it in the native APK) ----
+let serverDownUntil = 0;
+export const isServerMarkedDown = () => Date.now() < serverDownUntil;
+const markServerDown = () => {
+  serverDownUntil = Date.now() + 60_000;
+};
+const markServerUp = () => {
+  serverDownUntil = 0;
+};
+
+/** Try the Mac server first (short timeout); in the APK fall back to direct YouTube access. */
+async function withFallback<T>(serverCall: (signal: AbortSignal) => Promise<T>, nativeCall: () => Promise<T>): Promise<T> {
+  const native = yt.isNativeApp();
+  if (native && isServerMarkedDown()) return nativeCall();
+  try {
+    const result = await serverCall(AbortSignal.timeout(native ? 4000 : 15000));
+    markServerUp();
+    return result;
+  } catch (e) {
+    if (!native) throw e;
+    markServerDown();
+    return nativeCall();
+  }
+}
 
 export interface UserProfile {
   isLoggedIn: boolean;
@@ -107,9 +133,18 @@ export const api = {
   // Content & Feed
   async getHomeFeed(country = 'DE'): Promise<{ shelves: any[] }> {
     try {
-      const res = await fetch(`${getApiBase()}/home?country=${country}`, { signal: AbortSignal.timeout(5000) });
-      if (!res.ok) throw new Error('Home feed failed');
-      return await res.json();
+      return await withFallback(
+        async (signal) => {
+          const res = await fetch(`${getApiBase()}/home?country=${country}`, { signal });
+          if (!res.ok) throw new Error('Home feed failed');
+          return await res.json();
+        },
+        async () => {
+          const shelves = await yt.getNativeHomeShelves();
+          if (!shelves.length) throw new Error('native home empty');
+          return { shelves };
+        }
+      );
     } catch (e) {
       console.warn('Backend home feed unreachable, using offline fallback shelves');
       return {
@@ -156,17 +191,27 @@ export const api = {
     if (filter && filter !== 'all') {
       params.append('filter', filter);
     }
-    const res = await fetch(`${getApiBase()}/search?${params.toString()}`);
-    if (!res.ok) throw new Error('Search failed');
-    const data = await res.json();
-    return data.results || [];
+    return withFallback(
+      async (signal) => {
+        const res = await fetch(`${getApiBase()}/search?${params.toString()}`, { signal });
+        if (!res.ok) throw new Error('Search failed');
+        const data = await res.json();
+        return data.results || [];
+      },
+      () => (filter === 'songs' ? yt.searchSongs(query) : yt.searchAll(query))
+    );
   },
 
   async getCharts(country = 'DE'): Promise<Track[]> {
-    const res = await fetch(`${getApiBase()}/charts?country=${country}`);
-    if (!res.ok) throw new Error('Charts failed');
-    const data = await res.json();
-    return data.items || [];
+    return withFallback(
+      async (signal) => {
+        const res = await fetch(`${getApiBase()}/charts?country=${country}`, { signal });
+        if (!res.ok) throw new Error('Charts failed');
+        const data = await res.json();
+        return data.items || [];
+      },
+      async () => (await yt.searchSongs('Charts Deutschland')).slice(0, 20).map((t, i) => ({ ...t, rank: i + 1 }))
+    );
   },
 
   async getExplore(): Promise<MoodCategory[]> {
@@ -177,10 +222,19 @@ export const api = {
   },
 
   async getRadio(videoId: string): Promise<Track[]> {
-    const res = await fetch(`${getApiBase()}/radio/${videoId}`);
-    if (!res.ok) return [];
-    const data = await res.json();
-    return data.tracks || [];
+    try {
+      return await withFallback(
+        async (signal) => {
+          const res = await fetch(`${getApiBase()}/radio/${videoId}`, { signal });
+          if (!res.ok) throw new Error('Radio failed');
+          const data = await res.json();
+          return data.tracks || [];
+        },
+        () => yt.getRadioTracks(videoId)
+      );
+    } catch {
+      return [];
+    }
   },
 
   async getLyrics(videoId: string, title?: string, artist?: string): Promise<LyricsResponse> {
@@ -189,12 +243,29 @@ export const api = {
       if (title) params.append('title', title);
       if (artist) params.append('artist', artist);
       const q = params.toString() ? `?${params.toString()}` : '';
-      const res = await fetch(`${getApiBase()}/lyrics/${videoId}${q}`);
-      if (!res.ok) return { lyrics: null, isSynced: false, source: null };
-      return await res.json();
+      return await withFallback(
+        async (signal) => {
+          const res = await fetch(`${getApiBase()}/lyrics/${videoId}${q}`, { signal });
+          if (!res.ok) throw new Error('Lyrics failed');
+          return await res.json();
+        },
+        () => yt.getLyricsDirect(title, artist)
+      );
     } catch {
       return { lyrics: null, isSynced: false, source: null };
     }
+  },
+
+  /** Best playable URL: in the APK direct from YouTube (no Mac needed), otherwise via the server. */
+  async resolvePlaybackUrl(videoId: string, preferServer = false): Promise<{ url: string; direct: boolean }> {
+    if (yt.isNativeApp() && !preferServer) {
+      try {
+        return { url: await yt.getDirectAudioUrl(videoId), direct: true };
+      } catch (e) {
+        console.warn('Direct YouTube stream failed, using server:', e);
+      }
+    }
+    return { url: this.getStreamUrl(videoId), direct: false };
   },
 
   getStreamUrl(videoId: string): string {

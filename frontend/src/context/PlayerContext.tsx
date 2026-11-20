@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { Track, Playlist, RepeatMode, EqualizerPreset } from '../types';
-import { api } from '../services/api';
+import { api, isServerMarkedDown } from '../services/api';
+import { isNativeApp } from '../services/youtube';
 
 
 const safeSet = (k: string, v: string) => {
@@ -44,6 +45,8 @@ interface PlayerContextType {
   setBassGain: (gain: number) => void;
   setMidGain: (gain: number) => void;
   setTrebleGain: (gain: number) => void;
+  playbackError: string | null;
+  clearPlaybackError: () => void;
 
   // Controls
   playTrack: (track: Track, newQueue?: Track[]) => void;
@@ -113,10 +116,13 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   // 550 Sound Equalizer State
-  const [bassGain, setBassGainState] = useState<number>(4); // +4dB default warm punch
-  const [midGain, setMidGainState] = useState<number>(1);
-  const [trebleGain, setTrebleGainState] = useState<number>(2);
-  const [equalizerPreset, setEqualizerPresetState] = useState<EqualizerPreset>('bass_boost');
+  // Default flat: audio plays through the native <audio> output (no Web Audio graph),
+  // which is the only path that reliably produces sound in Android WebView and in background.
+  const [bassGain, setBassGainState] = useState<number>(0);
+  const [midGain, setMidGainState] = useState<number>(0);
+  const [trebleGain, setTrebleGainState] = useState<number>(0);
+  const [equalizerPreset, setEqualizerPresetState] = useState<EqualizerPreset>('flat');
+  const [playbackError, setPlaybackError] = useState<string | null>(null);
 
   // Library state
   const [likedTracks, setLikedTracks] = useState<Track[]>(() => {
@@ -161,6 +167,11 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
+  const retryRef = useRef<number>(0);
+  const playTokenRef = useRef<number>(0);
+  const currentTrackIdRef = useRef<string | null>(null);
+  const directSrcRef = useRef<boolean>(false);
+  const handleTrackEndRef = useRef<() => void>(() => {});
   const bassFilterRef = useRef<BiquadFilterNode | null>(null);
   const midFilterRef = useRef<BiquadFilterNode | null>(null);
   const trebleFilterRef = useRef<BiquadFilterNode | null>(null);
@@ -171,12 +182,15 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     audio.preload = 'auto';
     audio.setAttribute('playsinline', 'true');
     (audio as any).playsInline = true;
-    audio.crossOrigin = 'anonymous';
 
     audio.addEventListener('play', () => setIsPlaying(true));
     audio.addEventListener('pause', () => setIsPlaying(false));
     audio.addEventListener('waiting', () => setIsBuffering(true));
-    audio.addEventListener('playing', () => setIsBuffering(false));
+    audio.addEventListener('playing', () => {
+      setIsBuffering(false);
+      setPlaybackError(null);
+      retryRef.current = 0;
+    });
     audio.addEventListener('canplay', () => setIsBuffering(false));
 
     audio.addEventListener('timeupdate', () => {
@@ -190,13 +204,32 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     });
 
     audio.addEventListener('ended', () => {
-      handleTrackEnd();
+      handleTrackEndRef.current();
     });
 
-    audio.addEventListener('error', (e) => {
-      console.error('Audio playback error:', e);
+    audio.addEventListener('error', () => {
+      const code = audio.error?.code;
+      console.error('Audio playback error, code:', code, audio.src);
+      const src = audio.src;
+      const trackId = currentTrackIdRef.current;
+      // Retry once: direct YouTube URL failed -> try server; server failed -> try direct/server again
+      if (src && trackId && retryRef.current < 1) {
+        retryRef.current += 1;
+        const token = playTokenRef.current;
+        api
+          .resolvePlaybackUrl(trackId, directSrcRef.current)
+          .then(({ url, direct }) => {
+            if (token !== playTokenRef.current) return;
+            directSrcRef.current = direct;
+            audio.src = direct ? url : `${url}?retry=${Date.now()}`;
+            audio.play().catch(() => {});
+          })
+          .catch(() => {});
+        return;
+      }
       setIsBuffering(false);
       setIsPlaying(false);
+      setPlaybackError('Song konnte nicht geladen werden. Bitte Internetverbindung prüfen und nochmal antippen.');
     });
 
     audioRef.current = audio;
@@ -249,7 +282,14 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   };
 
+  const ensureEqualizer = (val: number) => {
+    if (val !== 0) initEqualizer();
+    const ctx = audioContextRef.current;
+    if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {});
+  };
+
   const setBassGain = (val: number) => {
+    ensureEqualizer(val);
     setBassGainState(val);
     if (bassFilterRef.current) {
       bassFilterRef.current.gain.value = val;
@@ -257,6 +297,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const setMidGain = (val: number) => {
+    ensureEqualizer(val);
     setMidGainState(val);
     if (midFilterRef.current) {
       midFilterRef.current.gain.value = val;
@@ -264,6 +305,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const setTrebleGain = (val: number) => {
+    ensureEqualizer(val);
     setTrebleGainState(val);
     if (trebleFilterRef.current) {
       trebleFilterRef.current.gain.value = val;
@@ -418,11 +460,12 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const playTrack = async (track: Track, newQueue?: Track[]) => {
     if (!audioRef.current) return;
 
-    initEqualizer();
-    if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
+    if (audioContextRef.current && audioContextRef.current.state !== 'running') {
       audioContextRef.current.resume().catch(console.error);
     }
 
+    retryRef.current = 0;
+    setPlaybackError(null);
     setCurrentTrack(track);
     setIsBuffering(true);
     setCurrentTime(0);
@@ -448,15 +491,34 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     setupMediaSession(track);
 
-    const streamUrl = api.getStreamUrl(track.id);
+    const token = ++playTokenRef.current;
+    currentTrackIdRef.current = track.id;
+    audioRef.current.pause();
+
+    let streamUrl: string;
+    try {
+      const resolved = await api.resolvePlaybackUrl(track.id);
+      streamUrl = resolved.url;
+      directSrcRef.current = resolved.direct;
+    } catch {
+      streamUrl = api.getStreamUrl(track.id);
+      directSrcRef.current = false;
+    }
+    // user tapped another song meanwhile
+    if (token !== playTokenRef.current || !audioRef.current) return;
+
     audioRef.current.src = streamUrl;
     audioRef.current.playbackRate = playbackRate;
+
+    audioRef.current.volume = volume;
+    audioRef.current.muted = isMuted;
 
     try {
       await audioRef.current.play();
       setIsPlaying(true);
-    } catch (err) {
-      console.error('Play call error:', err);
+    } catch (err: any) {
+      // AbortError = src changed again before playback started (fast skipping) -> ignore
+      if (err?.name !== 'AbortError') console.error('Play call error:', err);
     }
 
     // Prefetch radio
@@ -508,6 +570,35 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   };
 
+  handleTrackEndRef.current = handleTrackEnd;
+
+  // Prefetch next track on the server so skipping / auto-advance starts instantly
+  const nextPrefetchId = queue[queueIndex + 1]?.id;
+  useEffect(() => {
+    if (!nextPrefetchId) return;
+    const t = setTimeout(() => {
+      if (isNativeApp()) {
+        // warm the direct YouTube URL cache
+        api.resolvePlaybackUrl(nextPrefetchId).catch(() => {});
+      } else if (!isServerMarkedDown()) {
+        fetch(api.getStreamUrl(nextPrefetchId), { method: 'HEAD' }).catch(() => {});
+      }
+    }, 3000);
+    return () => clearTimeout(t);
+  }, [nextPrefetchId]);
+
+  // Resume Web Audio (only exists if EQ was enabled) when the app comes back to foreground
+  useEffect(() => {
+    const onVis = () => {
+      const ctx = audioContextRef.current;
+      if (document.visibilityState === 'visible' && ctx && ctx.state !== 'running') {
+        ctx.resume().catch(() => {});
+      }
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, []);
+
   const togglePlay = () => {
     if (!audioRef.current || !currentTrack) return;
     if (isPlaying) {
@@ -526,6 +617,8 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const resume = () => {
     if (audioRef.current && currentTrack) {
+      const ctx = audioContextRef.current;
+      if (ctx && ctx.state !== 'running') ctx.resume().catch(() => {});
       audioRef.current.play().catch(console.error);
       setIsPlaying(true);
     }
@@ -740,6 +833,8 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         setBassGain,
         setMidGain,
         setTrebleGain,
+        playbackError,
+        clearPlaybackError: () => setPlaybackError(null),
         playTrack,
         togglePlay,
         pause,
