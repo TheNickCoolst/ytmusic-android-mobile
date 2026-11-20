@@ -3,6 +3,7 @@ import { Track, Playlist, RepeatMode, EqualizerPreset } from '../types';
 import { api, isServerMarkedDown } from '../services/api';
 import { isNativeApp } from '../services/youtube';
 import { prepareTrack, planMix, MixPlan, TrackAnalysis } from '../services/dj';
+import { mediaControls } from '../services/mediaControls';
 
 export interface DjStatus {
   phase: 'off' | 'idle' | 'analyzing' | 'ready' | 'mixing' | 'error';
@@ -236,6 +237,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
   const decksRef = useRef<HTMLAudioElement[]>([]);
   const deckBlobRef = useRef(new Map<HTMLAudioElement, string>());
+  const publishMediaRef = useRef<() => void>(() => {});
   const djModeRef = useRef(djMode);
   const djPlanRef = useRef<DjPlanRef | null>(null);
   const djTransRef = useRef<DjTrans | null>(null);
@@ -295,6 +297,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       retryRef.current = 0;
     });
     audio.addEventListener('canplay', () => active() && setIsBuffering(false));
+    audio.addEventListener('seeked', () => active() && publishMediaRef.current());
 
     audio.addEventListener('timeupdate', () => {
       if (!active()) return;
@@ -1165,6 +1168,27 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     playTrack(queue[prevIdx], queue);
   };
 
+  // ---- system "now playing" notification (status bar, Samsung quick panel, lock screen) ----
+  const publishMediaState = (override?: { position?: number; playing?: boolean }) => {
+    if (!currentTrack) return;
+    const a = audioRef.current;
+    mediaControls.update({
+      title: currentTrack.title || 'Unbekannt',
+      artist: currentTrack.artist || '',
+      album: currentTrack.album || '',
+      artwork: currentTrack.thumbnail,
+      isPlaying: override?.playing ?? isPlaying,
+      position: override?.position ?? a?.currentTime ?? 0,
+      duration: (a && isFinite(a.duration) && a.duration) || duration || currentTrack.durationSeconds || 0,
+      rate: a?.playbackRate || 1,
+    });
+  };
+  publishMediaRef.current = () => publishMediaState();
+  useEffect(() => {
+    publishMediaState();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentTrack?.id, isPlaying, duration]);
+
   const seek = (seconds: number) => {
     if (djTransRef.current) finishTransition();
     const P = djPlanRef.current;
@@ -1175,6 +1199,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (audioRef.current) {
       audioRef.current.currentTime = seconds;
       setCurrentTime(seconds);
+      publishMediaState({ position: seconds });
       updateMediaSessionPosition(seconds, duration);
     }
   };
@@ -1311,6 +1336,21 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setSleepTimerRemaining(minutes * 60);
     }
   };
+
+  const mediaActionsRef = useRef({ resume, pause, nextTrack, previousTrack, seek });
+  mediaActionsRef.current = { resume, pause, nextTrack, previousTrack, seek };
+  useEffect(
+    () =>
+      mediaControls.onAction((action, position) => {
+        const f = mediaActionsRef.current;
+        if (action === 'play') f.resume();
+        else if (action === 'pause') f.pause();
+        else if (action === 'next') f.nextTrack();
+        else if (action === 'previous') f.previousTrack();
+        else if (action === 'seekto' && typeof position === 'number') f.seek(position);
+      }),
+    []
+  );
 
   return (
     <PlayerContext.Provider
