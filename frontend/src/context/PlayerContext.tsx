@@ -34,6 +34,8 @@ interface PlayerContextType {
   // 550 Sound Equalizer & Bass Boost
   audioQuality: 'high' | 'normal';
   setAudioQuality: (q: 'high' | 'normal') => void;
+  playbackRate: number;
+  setPlaybackRate: (rate: number) => void;
   bassGain: number;
   midGain: number;
   trebleGain: number;
@@ -101,6 +103,14 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [isPlayerExpanded, setIsPlayerExpanded] = useState<boolean>(false);
   const [isVideoMode, setIsVideoMode] = useState<boolean>(false);
   const [audioQuality, setAudioQuality] = useState<'high' | 'normal'>('high');
+  const [playbackRate, setPlaybackRateState] = useState<number>(1.0);
+
+  const setPlaybackRate = (rate: number) => {
+    setPlaybackRateState(rate);
+    if (audioRef.current) {
+      audioRef.current.playbackRate = rate;
+    }
+  };
 
   // 550 Sound Equalizer State
   const [bassGain, setBassGainState] = useState<number>(4); // +4dB default warm punch
@@ -440,6 +450,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     const streamUrl = api.getStreamUrl(track.id);
     audioRef.current.src = streamUrl;
+    audioRef.current.playbackRate = playbackRate;
 
     try {
       await audioRef.current.play();
@@ -719,6 +730,8 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         setIsVideoMode,
         audioQuality,
         setAudioQuality,
+        playbackRate,
+        setPlaybackRate,
         bassGain,
         midGain,
         trebleGain,

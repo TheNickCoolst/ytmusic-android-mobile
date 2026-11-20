@@ -70,6 +70,23 @@ init_yt_client()
 # Active download locks to prevent duplicate downloads
 download_locks: Dict[str, asyncio.Lock] = {}
 download_status: Dict[str, str] = {}
+CACHE_META_FILE = CACHE_DIR / "metadata.json"
+
+def get_cache_metadata() -> Dict[str, Any]:
+    if CACHE_META_FILE.exists():
+        try:
+            with open(CACHE_META_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def save_cache_metadata(meta: Dict[str, Any]):
+    try:
+        with open(CACHE_META_FILE, "w") as f:
+            json.dump(meta, f, indent=2)
+    except Exception as e:
+        print(f"Error saving cache metadata: {e}")
 
 def get_lock(video_id: str) -> asyncio.Lock:
     if video_id not in download_locks:
@@ -83,15 +100,23 @@ def get_cached_file(video_id: str) -> Optional[Path]:
             return p
     return None
 
-async def download_audio(video_id: str) -> Optional[Path]:
+async def download_audio(video_id: str, track_meta: Optional[Dict[str, Any]] = None) -> Optional[Path]:
     cached = get_cached_file(video_id)
     if cached:
+        if track_meta:
+            all_meta = get_cache_metadata()
+            all_meta[video_id] = track_meta
+            save_cache_metadata(all_meta)
         return cached
 
     lock = get_lock(video_id)
     async with lock:
         cached = get_cached_file(video_id)
         if cached:
+            if track_meta:
+                all_meta = get_cache_metadata()
+                all_meta[video_id] = track_meta
+                save_cache_metadata(all_meta)
             return cached
 
         download_status[video_id] = "downloading"
@@ -125,6 +150,11 @@ async def download_audio(video_id: str) -> Optional[Path]:
                 return None
 
             download_status[video_id] = "ready"
+            if track_meta:
+                all_meta = get_cache_metadata()
+                all_meta[video_id] = track_meta
+                save_cache_metadata(all_meta)
+
             return get_cached_file(video_id)
         except Exception as ex:
             print(f"Error during audio download {video_id}: {ex}")
@@ -774,23 +804,52 @@ async def get_radio(video_id: str):
 
 
 @app.get("/api/lyrics/{video_id}")
-async def get_lyrics(video_id: str):
-    """Fetch lyrics for song"""
+async def get_lyrics(video_id: str, title: Optional[str] = None, artist: Optional[str] = None):
+    """Fetch synchronized or standard lyrics for song (LRCLIB + YTM fallback)"""
     global yt
-    if not yt:
-        return {"lyrics": None, "source": "None"}
+    # 1. Try LRCLIB for real-time synchronized karaoke lyrics
+    if title:
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=4.0) as client:
+                params = {"track_name": title}
+                if artist:
+                    params["artist_name"] = artist
+                resp = await client.get("https://lrclib.net/api/get", params=params)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("syncedLyrics"):
+                        return {
+                            "lyrics": data.get("syncedLyrics"),
+                            "isSynced": True,
+                            "source": "LRCLIB Synced"
+                        }
+                    elif data.get("plainLyrics"):
+                        return {
+                            "lyrics": data.get("plainLyrics"),
+                            "isSynced": False,
+                            "source": "LRCLIB"
+                        }
+        except Exception as lrc_err:
+            print(f"LRCLIB notice ({title}): {lrc_err}")
 
-    try:
-        watch = yt.get_watch_playlist(videoId=video_id)
-        lyrics_id = watch.get("lyrics")
-        if lyrics_id:
-            res = yt.get_lyrics(lyrics_id)
-            if res and res.get("lyrics"):
-                return {"lyrics": res.get("lyrics"), "source": res.get("source", "YouTube Music")}
-    except Exception as e:
-        print(f"Lyrics lookup error {video_id}: {e}")
+    # 2. Fallback to YouTube Music official lyrics
+    if yt:
+        try:
+            watch = yt.get_watch_playlist(videoId=video_id)
+            lyrics_id = watch.get("lyrics")
+            if lyrics_id:
+                res = yt.get_lyrics(lyrics_id)
+                if res and res.get("lyrics"):
+                    return {
+                        "lyrics": res.get("lyrics"),
+                        "isSynced": False,
+                        "source": res.get("source", "YouTube Music")
+                    }
+        except Exception as e:
+            print(f"Lyrics lookup error {video_id}: {e}")
 
-    return {"lyrics": None, "source": None}
+    return {"lyrics": None, "isSynced": False, "source": None}
 
 
 # ==========================================
@@ -890,16 +949,23 @@ async def list_cache():
     """Get list of downloaded offline tracks and cache size"""
     cached_tracks = []
     total_size = 0
+    meta = get_cache_metadata()
     for f in CACHE_DIR.glob("*.*"):
         if f.is_file() and f.suffix in [".m4a", ".webm", ".mp3"]:
             size = f.stat().st_size
             total_size += size
             video_id = f.stem
+            track_info = meta.get(video_id, {})
             cached_tracks.append({
                 "id": video_id,
+                "title": track_info.get("title", f"Offline Track ({video_id})"),
+                "artist": track_info.get("artist", "YouTube Music Offline"),
+                "thumbnail": track_info.get("thumbnail", f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg"),
+                "duration": track_info.get("duration", "3:30"),
                 "filename": f.name,
                 "sizeBytes": size,
-                "sizeFormatted": f"{size / (1024 * 1024):.1f} MB"
+                "sizeFormatted": f"{size / (1024 * 1024):.1f} MB",
+                "isCached": True
             })
     return {
         "totalSizeBytes": total_size,
@@ -918,17 +984,30 @@ async def delete_cached_track(video_id: str):
         if p.exists():
             p.unlink()
             deleted = True
+    meta = get_cache_metadata()
+    if video_id in meta:
+        del meta[video_id]
+        save_cache_metadata(meta)
     return {"id": video_id, "deleted": deleted}
 
 
 @app.post("/api/download/{video_id}")
-async def trigger_download(video_id: str, background_tasks: BackgroundTasks):
+async def trigger_download(
+    video_id: str,
+    background_tasks: BackgroundTasks,
+    payload: Optional[Dict[str, Any]] = Body(None)
+):
     """Pre-download a track into offline cache"""
     cached = get_cached_file(video_id)
+    track_meta = payload if payload else {}
     if cached:
+        if track_meta:
+            meta = get_cache_metadata()
+            meta[video_id] = track_meta
+            save_cache_metadata(meta)
         return {"id": video_id, "status": "ready"}
 
-    background_tasks.add_task(download_audio, video_id)
+    background_tasks.add_task(download_audio, video_id, track_meta)
     return {"id": video_id, "status": "downloading"}
 
 

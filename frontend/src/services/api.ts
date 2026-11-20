@@ -183,13 +183,17 @@ export const api = {
     return data.tracks || [];
   },
 
-  async getLyrics(videoId: string): Promise<LyricsResponse> {
+  async getLyrics(videoId: string, title?: string, artist?: string): Promise<LyricsResponse> {
     try {
-      const res = await fetch(`${getApiBase()}/lyrics/${videoId}`);
-      if (!res.ok) return { lyrics: null, source: null };
+      const params = new URLSearchParams();
+      if (title) params.append('title', title);
+      if (artist) params.append('artist', artist);
+      const q = params.toString() ? `?${params.toString()}` : '';
+      const res = await fetch(`${getApiBase()}/lyrics/${videoId}${q}`);
+      if (!res.ok) return { lyrics: null, isSynced: false, source: null };
       return await res.json();
     } catch {
-      return { lyrics: null, source: null };
+      return { lyrics: null, isSynced: false, source: null };
     }
   },
 
@@ -212,8 +216,12 @@ export const api = {
     return await res.json();
   },
 
-  async downloadTrack(videoId: string) {
-    const res = await fetch(`${getApiBase()}/download/${videoId}`, { method: 'POST' });
+  async downloadTrack(videoId: string, meta?: { title?: string; artist?: string; thumbnail?: string; duration?: string }) {
+    const res = await fetch(`${getApiBase()}/download/${videoId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(meta || {})
+    });
     return await res.json();
   }
 };

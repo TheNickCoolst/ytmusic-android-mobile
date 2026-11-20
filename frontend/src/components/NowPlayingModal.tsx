@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   ChevronDown,
   Play,
@@ -23,11 +23,42 @@ import {
   Sliders,
   Music2,
   Video,
-  Cast
+  Car,
+  Mic2,
+  Gauge,
+  Volume2,
+  VolumeX,
+  X
 } from 'lucide-react';
 import { usePlayer } from '../context/PlayerContext';
 import { api } from '../services/api';
 import { EqualizerPreset } from '../types';
+
+interface LyricLine {
+  time: number;
+  text: string;
+}
+
+function parseLrc(lrcText: string): LyricLine[] {
+  const lines = lrcText.split('\n');
+  const result: LyricLine[] = [];
+  const timeRegex = /\[(\d{2}):(\d{2})\.(\d{2,3})\](.*)/;
+
+  for (const line of lines) {
+    const match = timeRegex.exec(line.trim());
+    if (match) {
+      const minutes = parseInt(match[1], 10);
+      const seconds = parseInt(match[2], 10);
+      const millis = parseInt(match[3].padEnd(3, '0').slice(0, 3), 10);
+      const time = minutes * 60 + seconds + millis / 1000;
+      const text = match[4].trim();
+      if (text) {
+        result.push({ time, text });
+      }
+    }
+  }
+  return result.sort((a, b) => a.time - b.time);
+}
 
 export const NowPlayingModal: React.FC = () => {
   const {
@@ -61,7 +92,8 @@ export const NowPlayingModal: React.FC = () => {
     isVideoMode,
     setIsVideoMode,
     audioQuality,
-    setAudioQuality,
+    playbackRate,
+    setPlaybackRate,
     bassGain,
     setBassGain,
     midGain,
@@ -69,29 +101,81 @@ export const NowPlayingModal: React.FC = () => {
     trebleGain,
     setTrebleGain,
     equalizerPreset,
-    setEqualizerPreset
+    setEqualizerPreset,
+    isMuted,
+    toggleMute
   } = usePlayer();
 
   const [activeTab, setActiveTab] = useState<'queue' | 'lyrics' | 'eq'>('queue');
   const [lyrics, setLyrics] = useState<string | null>(null);
+  const [syncedLines, setSyncedLines] = useState<LyricLine[]>([]);
+  const [isSynced, setIsSynced] = useState<boolean>(false);
+  const [lyricsSource, setLyricsSource] = useState<string | null>(null);
   const [loadingLyrics, setLoadingLyrics] = useState(false);
   const [showSleepMenu, setShowSleepMenu] = useState(false);
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [scrubValue, setScrubValue] = useState(0);
   const [downloaded, setDownloaded] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [isCarMode, setIsCarMode] = useState(false);
+
+  const activeLyricRef = useRef<HTMLDivElement | null>(null);
+  const lyricsScrollContainerRef = useRef<HTMLDivElement | null>(null);
 
   // Load lyrics when track changes
   useEffect(() => {
     if (!currentTrack) return;
     setLoadingLyrics(true);
     setLyrics(null);
+    setSyncedLines([]);
+    setIsSynced(false);
+    setLyricsSource(null);
     setDownloaded(currentTrack.isCached || false);
-    api.getLyrics(currentTrack.id)
-      .then((res) => setLyrics(res.lyrics))
-      .catch(() => setLyrics(null))
+
+    api.getLyrics(currentTrack.id, currentTrack.title, currentTrack.artist)
+      .then((res) => {
+        setLyrics(res.lyrics);
+        setLyricsSource(res.source || null);
+        if (res.lyrics) {
+          const parsed = parseLrc(res.lyrics);
+          if (parsed.length > 0) {
+            setSyncedLines(parsed);
+            setIsSynced(true);
+          } else {
+            setSyncedLines([]);
+            setIsSynced(false);
+          }
+        }
+      })
+      .catch(() => {
+        setLyrics(null);
+        setSyncedLines([]);
+        setIsSynced(false);
+      })
       .finally(() => setLoadingLyrics(false));
   }, [currentTrack?.id]);
+
+  // Compute active lyric line
+  let activeLyricIndex = -1;
+  if (isSynced && syncedLines.length > 0) {
+    for (let i = 0; i < syncedLines.length; i++) {
+      if (currentTime >= syncedLines[i].time) {
+        activeLyricIndex = i;
+      } else {
+        break;
+      }
+    }
+  }
+
+  // Auto-scroll active lyric line into view smoothly
+  useEffect(() => {
+    if (activeTab === 'lyrics' && isSynced && activeLyricRef.current) {
+      activeLyricRef.current.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      });
+    }
+  }, [activeLyricIndex, activeTab, isSynced]);
 
   if (!isPlayerExpanded || !currentTrack) return null;
 
@@ -123,7 +207,12 @@ export const NowPlayingModal: React.FC = () => {
     if (!currentTrack || downloaded || isDownloading) return;
     setIsDownloading(true);
     try {
-      await api.downloadTrack(currentTrack.id);
+      await api.downloadTrack(currentTrack.id, {
+        title: currentTrack.title,
+        artist: currentTrack.artist,
+        thumbnail: currentTrack.thumbnail,
+        duration: currentTrack.duration || formatTime(duration)
+      });
       setDownloaded(true);
     } catch (e) {
       console.error('Download failed:', e);
@@ -174,6 +263,97 @@ export const NowPlayingModal: React.FC = () => {
         <div className="absolute inset-0 bg-gradient-to-b from-transparent via-[#030303]/85 to-[#030303]" />
       </div>
 
+      {/* Car Mode Fullscreen Overlay */}
+      {isCarMode && (
+        <div className="fixed inset-0 z-[60] bg-[#070707] flex flex-col justify-between p-6 select-none animate-in fade-in duration-200">
+          {/* Car Mode Header */}
+          <div className="flex items-center justify-between pt-[max(env(safe-area-inset-top),12px)]">
+            <div className="flex items-center space-x-2 text-red-500 font-black tracking-wider uppercase text-sm">
+              <Car className="w-5 h-5" />
+              <span>550 Fahrmodus</span>
+            </div>
+            <button
+              onClick={() => setIsCarMode(false)}
+              className="flex items-center space-x-1.5 px-4 py-2 rounded-full bg-white/10 hover:bg-white/20 text-white font-semibold text-xs transition active:scale-95"
+            >
+              <X className="w-4 h-4" />
+              <span>Beenden</span>
+            </button>
+          </div>
+
+          {/* Huge Car Cover & Metadata */}
+          <div className="flex flex-col items-center text-center my-auto px-4">
+            <div className="w-56 h-56 sm:w-72 sm:h-72 rounded-3xl overflow-hidden shadow-2xl shadow-red-950/50 border-2 border-white/15 mb-5">
+              <img
+                src={currentTrack.thumbnail}
+                alt={currentTrack.title}
+                className="w-full h-full object-cover"
+              />
+            </div>
+            <h2 className="text-2xl sm:text-3xl font-black text-white truncate max-w-sm tracking-tight">
+              {currentTrack.title}
+            </h2>
+            <p className="text-base sm:text-lg text-zinc-400 truncate max-w-sm mt-1 font-medium">
+              {currentTrack.artist}
+            </p>
+          </div>
+
+          {/* Giant Touch-Friendly Car Controls */}
+          <div className="space-y-6 pb-6">
+            <div className="flex items-center justify-center space-x-8">
+              <button
+                onClick={previousTrack}
+                className="p-5 rounded-full bg-white/10 hover:bg-white/20 text-white active:scale-90 transition"
+                title="Vorheriger Titel"
+              >
+                <SkipBack className="w-9 h-9 fill-current" />
+              </button>
+
+              <button
+                onClick={togglePlay}
+                className="p-7 rounded-full bg-red-600 hover:bg-red-500 text-white active:scale-95 shadow-2xl shadow-red-600/50 transition"
+                title={isPlaying ? "Pause" : "Play"}
+              >
+                {isPlaying ? (
+                  <Pause className="w-12 h-12 fill-white" />
+                ) : (
+                  <Play className="w-12 h-12 fill-white ml-1" />
+                )}
+              </button>
+
+              <button
+                onClick={nextTrack}
+                className="p-5 rounded-full bg-white/10 hover:bg-white/20 text-white active:scale-90 transition"
+                title="Nächster Titel"
+              >
+                <SkipForward className="w-9 h-9 fill-current" />
+              </button>
+            </div>
+
+            {/* Quick Car Helpers */}
+            <div className="flex items-center justify-around max-w-xs mx-auto border-t border-white/10 pt-4">
+              <button
+                onClick={() => toggleLike(currentTrack)}
+                className={`p-3 rounded-full active:scale-90 transition ${
+                  liked ? 'text-red-500 bg-red-500/15' : 'text-zinc-400 bg-white/5'
+                }`}
+                title="Gefällt mir"
+              >
+                <ThumbsUp className={`w-6 h-6 ${liked ? 'fill-current' : ''}`} />
+              </button>
+
+              <button
+                onClick={toggleMute}
+                className="p-3 rounded-full bg-white/5 text-zinc-300 active:scale-90 transition"
+                title={isMuted ? "Stummschaltung aufheben" : "Stumm"}
+              >
+                {isMuted ? <VolumeX className="w-6 h-6 text-red-500" /> : <Volume2 className="w-6 h-6" />}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Top Bar: 1:1 YouTube Music Player Header */}
       <header className="relative z-10 flex items-center justify-between px-4 pt-[max(env(safe-area-inset-top),12px)] pb-1">
         {/* Minimize Chevron */}
@@ -207,8 +387,18 @@ export const NowPlayingModal: React.FC = () => {
           </button>
         </div>
 
-        {/* Actions: Cast & Sleep Timer */}
+        {/* Actions: Fahrmodus & Sleep Timer */}
         <div className="flex items-center space-x-1">
+          {/* Fahrmodus button */}
+          <button
+            onClick={() => setIsCarMode(true)}
+            className="p-2 text-zinc-300 hover:text-white rounded-full active:scale-90 transition"
+            title="Fahrmodus"
+          >
+            <Car className="w-5 h-5" />
+          </button>
+
+          {/* Sleep Timer */}
           <button
             onClick={() => setShowSleepMenu(!showSleepMenu)}
             className={`p-2 rounded-full active:scale-90 transition ${
@@ -275,26 +465,46 @@ export const NowPlayingModal: React.FC = () => {
               />
             </div>
           ) : (
-            /* Album Artwork with Soft Shadow */
-            <div className="w-full h-full rounded-2xl overflow-hidden shadow-2xl shadow-black/90 bg-zinc-900 border border-white/10">
-              <img
-                src={currentTrack.thumbnail}
-                alt={currentTrack.title}
-                className={`w-full h-full object-cover transition-transform duration-1000 ${
-                  isPlaying ? 'scale-100' : 'scale-95 brightness-90'
-                }`}
-              />
-              {isBuffering && (
-                <div className="absolute inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center">
-                  <Loader2 className="w-12 h-12 text-white animate-spin" />
-                </div>
-              )}
+            /* Album Artwork with Soft Shadow & Audio Visualizer */
+            <div className="w-full h-full relative flex flex-col justify-center">
+              <div className="w-full h-full rounded-2xl overflow-hidden shadow-2xl shadow-black/90 bg-zinc-900 border border-white/10">
+                <img
+                  src={currentTrack.thumbnail}
+                  alt={currentTrack.title}
+                  className={`w-full h-full object-cover transition-transform duration-1000 ${
+                    isPlaying ? 'scale-100' : 'scale-95 brightness-90'
+                  }`}
+                />
+                {isBuffering && (
+                  <div className="absolute inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center">
+                    <Loader2 className="w-12 h-12 text-white animate-spin" />
+                  </div>
+                )}
+              </div>
+
+              {/* 550 Dynamic Audio Waveform Visualizer */}
+              <div className="flex items-end justify-center space-x-1 h-5 mt-2.5 px-4">
+                {[45, 80, 100, 65, 90, 50, 85, 100, 70, 95, 60, 85, 75, 45, 90, 60].map((baseHeight, idx) => {
+                  const factor = isPlaying ? ((Math.floor(currentTime * 4) + idx) % 5 + 1) / 5 : 0.2;
+                  const currentH = Math.max(15, baseHeight * factor);
+                  return (
+                    <div
+                      key={idx}
+                      className="w-1 bg-gradient-to-t from-red-600 to-rose-400 rounded-full transition-all duration-200"
+                      style={{
+                        height: `${currentH}%`,
+                        opacity: isPlaying ? 0.85 : 0.25
+                      }}
+                    />
+                  );
+                })}
+              </div>
             </div>
           )}
         </div>
 
         {/* Title & Artist */}
-        <div className="mt-3">
+        <div className="mt-2">
           <div className="flex items-center justify-between">
             <div className="min-w-0 flex-1 mr-3">
               <h1 className="text-xl sm:text-2xl font-bold text-white truncate tracking-tight">
@@ -311,7 +521,7 @@ export const NowPlayingModal: React.FC = () => {
           </div>
 
           {/* 1:1 YouTube Music Action Row (Thumbs Up, Thumbs Down, Save, Share, Download) */}
-          <div className="flex items-center justify-between mt-3 px-2 border-y border-white/5 py-1.5">
+          <div className="flex items-center justify-between mt-2.5 px-2 border-y border-white/5 py-1.5">
             {/* Thumbs Up (Like) */}
             <button
               onClick={() => toggleLike(currentTrack)}
@@ -364,7 +574,7 @@ export const NowPlayingModal: React.FC = () => {
         </div>
 
         {/* Custom Progress Scrubber */}
-        <div className="mt-3">
+        <div className="mt-2.5">
           <div className="relative flex items-center h-5 group">
             <input
               type="range"
@@ -398,7 +608,7 @@ export const NowPlayingModal: React.FC = () => {
         </div>
 
         {/* Media Controls (Shuffle, Back, Play, Forward, Repeat) */}
-        <div className="flex items-center justify-between px-2 my-2">
+        <div className="flex items-center justify-between px-2 my-1.5">
           <button
             onClick={toggleShuffle}
             className={`p-3 rounded-full active:scale-90 transition ${
@@ -449,7 +659,7 @@ export const NowPlayingModal: React.FC = () => {
           </button>
         </div>
 
-        {/* Bottom Drawer Tabs: Queue vs Lyrics vs 550 Equalizer */}
+        {/* Bottom Drawer Tabs: Queue vs Karaoke Lyrics vs 550 Equalizer */}
         <div className="border-t border-white/10 pt-2">
           <div className="flex items-center justify-around border-b border-white/5 pb-2">
             <button
@@ -468,8 +678,11 @@ export const NowPlayingModal: React.FC = () => {
                 activeTab === 'lyrics' ? 'text-white border-b-2 border-red-500' : 'text-zinc-500 hover:text-zinc-300'
               }`}
             >
-              <FileText className="w-4 h-4" />
+              <Mic2 className="w-4 h-4 text-red-500" />
               <span>Songtext</span>
+              {isSynced && (
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse ml-0.5" />
+              )}
             </button>
 
             {/* The 550 Pro Equalizer Tab */}
@@ -480,12 +693,12 @@ export const NowPlayingModal: React.FC = () => {
               }`}
             >
               <Sliders className="w-4 h-4" />
-              <span>550 Equalizer</span>
+              <span>550 Studio</span>
             </button>
           </div>
 
           {/* Drawer Content */}
-          <div className="h-44 overflow-y-auto pt-2 scrollbar-thin">
+          <div ref={lyricsScrollContainerRef} className="h-44 overflow-y-auto pt-2 scrollbar-thin">
             {activeTab === 'queue' ? (
               <div className="space-y-1">
                 {/* Auto-play Radio Toggle */}
@@ -551,32 +764,97 @@ export const NowPlayingModal: React.FC = () => {
                 })}
               </div>
             ) : activeTab === 'lyrics' ? (
-              /* Lyrics View */
-              <div className="py-2 px-3 text-center">
+              /* Synchronized Karaoke Lyrics View */
+              <div className="py-2 px-3">
                 {loadingLyrics ? (
                   <div className="flex flex-col items-center justify-center py-8 text-zinc-400 space-y-2">
                     <Loader2 className="w-6 h-6 animate-spin text-red-500" />
-                    <span className="text-xs">Songtext wird geladen...</span>
+                    <span className="text-xs">Synchronisiere Songtext...</span>
+                  </div>
+                ) : isSynced && syncedLines.length > 0 ? (
+                  <div className="space-y-4 text-center py-4">
+                    <div className="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[10px] text-emerald-400 font-semibold mb-2">
+                      <Sparkles className="w-3 h-3 text-emerald-400" />
+                      <span>Karaoke Live-Synchronisiert (Tippe zum Springen)</span>
+                    </div>
+                    {syncedLines.map((line, idx) => {
+                      const isActive = idx === activeLyricIndex;
+                      const isPast = idx < activeLyricIndex;
+                      return (
+                        <div
+                          key={idx}
+                          ref={isActive ? activeLyricRef : null}
+                          onClick={() => seek(line.time)}
+                          className={`cursor-pointer transition-all duration-300 py-1 px-2 rounded-lg ${
+                            isActive
+                              ? 'text-lg sm:text-xl font-black text-white scale-105 drop-shadow-[0_0_16px_rgba(239,68,68,0.7)]'
+                              : isPast
+                              ? 'text-sm font-medium text-zinc-400 hover:text-zinc-200'
+                              : 'text-sm font-normal text-zinc-600 hover:text-zinc-400'
+                          }`}
+                        >
+                          {line.text}
+                        </div>
+                      );
+                    })}
                   </div>
                 ) : lyrics ? (
-                  <div className="text-sm leading-relaxed text-zinc-200 whitespace-pre-line font-medium">
-                    {lyrics}
+                  <div className="text-center py-3">
+                    <div className="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full bg-white/5 border border-white/10 text-[10px] text-zinc-400 mb-3">
+                      <span>{lyricsSource || 'Songtext'}</span>
+                    </div>
+                    <div className="text-sm leading-relaxed text-zinc-200 whitespace-pre-line font-medium">
+                      {lyrics}
+                    </div>
                   </div>
                 ) : (
-                  <div className="py-8 text-xs text-zinc-500">
+                  <div className="py-8 text-center text-xs text-zinc-500">
                     Kein Songtext für diesen Titel verfügbar.
                   </div>
                 )}
               </div>
             ) : (
-              /* 550 Pro Equalizer View */
+              /* 550 Pro Equalizer & DJ Speed Studio */
               <div className="p-2 space-y-3">
                 <div className="flex items-center justify-between text-xs text-zinc-300">
                   <span className="font-bold flex items-center space-x-1">
                     <Sparkles className="w-3.5 h-3.5 text-red-500" />
-                    <span>550 Sound Studio & Bass Booster</span>
+                    <span>550 Sound Studio & DJ Controller</span>
                   </span>
                   <span className="text-emerald-400 text-[11px] font-semibold">Aktiv</span>
+                </div>
+
+                {/* DJ Speed & Tempo Bar */}
+                <div className="space-y-1.5 bg-white/5 p-2 rounded-xl border border-white/5">
+                  <div className="flex items-center justify-between text-[11px] text-zinc-400">
+                    <span className="flex items-center space-x-1">
+                      <Gauge className="w-3.5 h-3.5 text-red-400" />
+                      <span>DJ Wiedergabegeschwindigkeit (Tempo)</span>
+                    </span>
+                    <span className="font-mono text-white font-bold">{playbackRate}x</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-1">
+                    {[
+                      { rate: 0.75, label: '0.75x Chill' },
+                      { rate: 0.9, label: '0.9x Slowed' },
+                      { rate: 1.0, label: '1.0x Normal' },
+                      { rate: 1.15, label: '1.15x Groove' },
+                      { rate: 1.25, label: '1.25x Nightcore' },
+                      { rate: 1.5, label: '1.5x Speed' },
+                    ].map((item) => (
+                      <button
+                        key={item.rate}
+                        onClick={() => setPlaybackRate(item.rate)}
+                        className={`py-1 px-1.5 rounded-lg text-[11px] font-semibold transition active:scale-95 ${
+                          playbackRate === item.rate
+                            ? 'bg-red-600 text-white font-bold shadow-md'
+                            : 'bg-white/5 text-zinc-300 hover:bg-white/10'
+                        }`}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
                 {/* Preset Chips */}

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Play, MoreVertical, Heart, Download, Check, ListPlus, Radio, Loader2 } from 'lucide-react';
+import { Play, MoreVertical, Heart, Download, Check, ListPlus, Radio, Loader2, FolderPlus, X } from 'lucide-react';
 import { Track } from '../types';
 import { usePlayer } from '../context/PlayerContext';
 import { api } from '../services/api';
@@ -11,8 +11,9 @@ interface TrackItemProps {
 }
 
 export const TrackItem: React.FC<TrackItemProps> = ({ track, index, playlistContext }) => {
-  const { currentTrack, isPlaying, playTrack, addToQueue, toggleLike, isLiked } = usePlayer();
+  const { currentTrack, isPlaying, playTrack, addToQueue, toggleLike, isLiked, playlists, addToPlaylist } = usePlayer();
   const [showMenu, setShowMenu] = useState(false);
+  const [showPlaylistPicker, setShowPlaylistPicker] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloaded, setDownloaded] = useState(track.isCached || false);
 
@@ -28,7 +29,12 @@ export const TrackItem: React.FC<TrackItemProps> = ({ track, index, playlistCont
     setIsDownloading(true);
     setShowMenu(false);
     try {
-      await api.downloadTrack(track.id);
+      await api.downloadTrack(track.id, {
+        title: track.title,
+        artist: track.artist,
+        thumbnail: track.thumbnail,
+        duration: track.duration
+      });
       setDownloaded(true);
     } catch (err) {
       console.error('Download error:', err);
@@ -119,7 +125,7 @@ export const TrackItem: React.FC<TrackItemProps> = ({ track, index, playlistCont
               className="fixed inset-0 z-40"
               onClick={() => setShowMenu(false)}
             />
-            <div className="absolute right-0 top-10 z-50 w-48 bg-[#1f1f1f] border border-white/10 rounded-xl shadow-2xl py-1 backdrop-blur-xl">
+            <div className="absolute right-0 top-10 z-50 w-52 bg-[#1f1f1f] border border-white/10 rounded-xl shadow-2xl py-1 backdrop-blur-xl">
               <button
                 onClick={() => {
                   addToQueue(track);
@@ -129,6 +135,17 @@ export const TrackItem: React.FC<TrackItemProps> = ({ track, index, playlistCont
               >
                 <ListPlus className="w-4 h-4 text-zinc-400" />
                 <span>Zur Warteschlange</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setShowMenu(false);
+                  setShowPlaylistPicker(true);
+                }}
+                className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-white/10 flex items-center space-x-2.5"
+              >
+                <FolderPlus className="w-4 h-4 text-zinc-400" />
+                <span>In Playlist speichern</span>
               </button>
 
               <button
@@ -158,6 +175,48 @@ export const TrackItem: React.FC<TrackItemProps> = ({ track, index, playlistCont
               </button>
             </div>
           </>
+        )}
+
+        {/* Playlist Picker Dialog */}
+        {showPlaylistPicker && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+            <div className="w-full max-w-xs bg-[#1c1c1c] border border-white/10 rounded-2xl p-4 shadow-2xl">
+              <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                <span className="text-xs font-bold text-white flex items-center space-x-1.5">
+                  <FolderPlus className="w-4 h-4 text-red-500" />
+                  <span>Playlist wählen</span>
+                </span>
+                <button
+                  onClick={() => setShowPlaylistPicker(false)}
+                  className="p-1 text-zinc-400 hover:text-white"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="mt-3 max-h-52 overflow-y-auto space-y-1">
+                {playlists.length === 0 ? (
+                  <div className="text-xs text-zinc-400 text-center py-4">
+                    Noch keine Playlists erstellt. Erstelle zuerst eine unter "Mediathek"!
+                  </div>
+                ) : (
+                  playlists.map((pl) => (
+                    <button
+                      key={pl.id}
+                      onClick={() => {
+                        addToPlaylist(pl.id, track);
+                        setShowPlaylistPicker(false);
+                      }}
+                      className="w-full p-2 text-left text-xs text-white hover:bg-white/10 rounded-lg flex items-center justify-between transition"
+                    >
+                      <span className="font-semibold truncate">{pl.name}</span>
+                      <span className="text-[10px] text-zinc-400">{pl.tracks.length} Titel</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </div>

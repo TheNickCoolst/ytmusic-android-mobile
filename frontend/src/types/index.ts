@@ -34,6 +34,7 @@ export interface MoodCategory {
 
 export interface LyricsResponse {
   lyrics: string | null;
+  isSynced?: boolean;
   source: string | null;
 }
 
