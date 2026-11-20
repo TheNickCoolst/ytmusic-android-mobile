@@ -66,6 +66,20 @@ const getVisitorData = async (): Promise<string | null> => {
         console.warn('visitorData fetch failed', e);
         visitorData = null;
       }
+      // iOS native HTTP can't read sw.js_data (it tries to parse it as JSON): ask InnerTube directly.
+      // Without visitor data the player answers LOGIN_REQUIRED ("confirm you're not a bot").
+      if (!visitorData) {
+        try {
+          const txt = await http('https://music.youtube.com/youtubei/v1/visitor_id?prettyPrint=false', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'User-Agent': WEB_UA, Origin: 'https://music.youtube.com' },
+            body: { context: { client: MUSIC_CLIENT } },
+          });
+          visitorData = JSON.parse(txt)?.responseContext?.visitorData || null;
+        } catch (e) {
+          console.warn('visitor_id fetch failed', e);
+        }
+      }
       visitorPromise = null;
       return visitorData;
     })();
