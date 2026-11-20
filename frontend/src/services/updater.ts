@@ -9,6 +9,7 @@ const LATEST_URL = `https://github.com/${REPO}/releases/download/web-latest/late
 export interface UpdateInfo {
   version: number; // web build number
   url: string; // zip of the web bundle
+  checksum: string; // SHA-256 of the zip (verified by the plugin)
   minNative: string; // oldest native shell that can run it
   apk?: string;
   ipa?: string;
@@ -54,14 +55,18 @@ export const checkForUpdate = async (onStatus: (s: UpdateStatus) => void): Promi
     });
     if (res.status !== 200) return;
     const info: UpdateInfo = typeof res.data === 'string' ? JSON.parse(res.data) : res.data;
-    if (!info?.version || info.version <= currentWebBuild() || info.version <= preparedVersion) return;
+    if (!info?.version || !info.checksum || info.version <= currentWebBuild() || info.version <= preparedVersion) return;
 
     const native = (await CapacitorUpdater.getBuiltinVersion()).version || '0';
     if (info.minNative && cmpVersion(native, info.minNative) < 0) {
       onStatus({ type: 'native', info });
       return;
     }
-    const bundle = await CapacitorUpdater.download({ url: info.url, version: String(info.version) });
+    const bundle = await CapacitorUpdater.download({
+      url: info.url,
+      version: String(info.version),
+      checksum: info.checksum,
+    });
     // becomes active on the next app start (or right away via applyUpdate)
     await CapacitorUpdater.next({ id: bundle.id });
     preparedVersion = info.version;

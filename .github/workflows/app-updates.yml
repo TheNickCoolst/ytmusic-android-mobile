@@ -37,10 +37,12 @@ jobs:
         run: |
           cd frontend/dist && zip -qr "../../web-${WEB_BUILD}.zip" . && cd ../..
           MIN_NATIVE=$(cat frontend/min-native.txt | tr -d '[:space:]')
+          CHECKSUM=$(sha256sum "web-${WEB_BUILD}.zip" | cut -d' ' -f1)
           cat > latest.json <<JSON
           {
             "version": ${WEB_BUILD},
             "url": "https://github.com/${REPO}/releases/download/web-latest/web-${WEB_BUILD}.zip",
+            "checksum": "${CHECKSUM}",
             "minNative": "${MIN_NATIVE}",
             "apk": "https://github.com/${REPO}/releases/latest/download/ytmusic-mobile.apk",
             "ipa": "https://github.com/${REPO}/releases/download/ios-latest/ytmusic-mobile.ipa",
