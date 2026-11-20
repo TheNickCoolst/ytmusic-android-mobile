@@ -14,6 +14,11 @@ export const googleAuthService = {
     return Capacitor.isNativePlatform();
   },
 
+  /** In-app Google login window exists (Android APK); iOS uses the manual cookie fallback for now. */
+  hasInAppLogin(): boolean {
+    return Capacitor.isNativePlatform() && Capacitor.isPluginAvailable('GoogleAuth');
+  },
+
   async openSystemBrowser(url?: string): Promise<void> {
     const loginUrl =
       url ||

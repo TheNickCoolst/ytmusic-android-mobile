@@ -47,7 +47,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   if (!isOpen) return null;
 
-  const isNative = googleAuthService.isNative();
+  const isNative = googleAuthService.hasInAppLogin();
 
   // APK: Google login in an in-app window, cookie stays on the phone
   const handleInAppLogin = async () => {
