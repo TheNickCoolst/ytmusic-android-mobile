@@ -86,7 +86,19 @@ export const applyUpdate = async (bundleId: string) => {
 /** Must run on every start: confirms the running bundle works (otherwise the plugin rolls back). */
 export const initUpdater = (onStatus: (s: UpdateStatus) => void): (() => void) => {
   if (!available()) return () => {};
-  CapacitorUpdater.notifyAppReady().catch(() => {});
+  (async () => {
+    try {
+      await CapacitorUpdater.notifyAppReady();
+      // a newer version was downloaded last time -> switch to it right at app start
+      const next = await CapacitorUpdater.getNextBundle();
+      const v = next ? parseInt(next.version, 10) : 0;
+      if (next && next.id !== 'builtin' && next.status !== 'error' && v > currentWebBuild()) {
+        await CapacitorUpdater.set({ id: next.id });
+      }
+    } catch (e) {
+      console.warn('updater init failed', e);
+    }
+  })();
   const first = setTimeout(() => checkForUpdate(onStatus), 8000);
   const every = setInterval(() => checkForUpdate(onStatus), 6 * 60 * 60 * 1000);
   return () => {
