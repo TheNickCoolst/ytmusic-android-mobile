@@ -2,6 +2,11 @@ import React, { createContext, useContext, useState, useEffect, useRef } from 'r
 import { Track, Playlist, RepeatMode, EqualizerPreset } from '../types';
 import { api } from '../services/api';
 
+
+const safeSet = (k: string, v: string) => {
+  try { localStorage.setItem(k, v); } catch { /* storage unavailable */ }
+};
+
 interface PlayerContextType {
   currentTrack: Track | null;
   isPlaying: boolean;
@@ -294,19 +299,19 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   // LocalStorage sync
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.LIKED, JSON.stringify(likedTracks));
+    safeSet(STORAGE_KEYS.LIKED, JSON.stringify(likedTracks));
   }, [likedTracks]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.DISLIKED, JSON.stringify(dislikedTrackIds));
+    safeSet(STORAGE_KEYS.DISLIKED, JSON.stringify(dislikedTrackIds));
   }, [dislikedTrackIds]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.PLAYLISTS, JSON.stringify(playlists));
+    safeSet(STORAGE_KEYS.PLAYLISTS, JSON.stringify(playlists));
   }, [playlists]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.HISTORY, JSON.stringify(history));
+    safeSet(STORAGE_KEYS.HISTORY, JSON.stringify(history));
   }, [history]);
 
   // Sleep timer interval

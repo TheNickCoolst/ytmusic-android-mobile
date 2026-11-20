@@ -12,7 +12,8 @@ export const getApiBase = (): string => {
   if (typeof window === 'undefined') return 'http://127.0.0.1:8000/api';
 
   // 1. User manual override in localStorage
-  const saved = localStorage.getItem('ytmusic_server_url');
+  let saved: string | null = null;
+  try { saved = localStorage.getItem('ytmusic_server_url'); } catch { /* ignore */ }
   if (saved) return `${saved.replace(/\/+$/, '')}/api`;
 
   // 2. If running in browser or PWA where port is 8000

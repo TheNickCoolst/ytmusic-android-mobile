@@ -4,12 +4,14 @@ const config: CapacitorConfig = {
   appId: 'com.ytmusic.mobile',
   appName: 'YT Music',
   webDir: 'dist',
+  backgroundColor: '#030303',
   server: {
     androidScheme: 'https',
     cleartext: true,
   },
   android: {
     allowMixedContent: true,
+    backgroundColor: '#030303',
   }
 };
 

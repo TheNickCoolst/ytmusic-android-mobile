@@ -34,7 +34,7 @@ export const SearchView: React.FC = () => {
       // Save to recent searches
       setRecentSearches((prev) => {
         const updated = [searchQuery, ...prev.filter((q) => q.toLowerCase() !== searchQuery.toLowerCase())].slice(0, 8);
-        localStorage.setItem('ytmusic_recent_searches', JSON.stringify(updated));
+        try { localStorage.setItem('ytmusic_recent_searches', JSON.stringify(updated)); } catch { /* ignore */ }
         return updated;
       });
     } catch (err) {
