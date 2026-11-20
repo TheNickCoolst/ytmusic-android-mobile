@@ -1077,6 +1077,33 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentTrack, queue, queueIndex, shuffle, repeatMode, djMode]);
 
+  // Last song in the queue: fetch the radio continuation now, not when the song ends.
+  // iOS suspends the app's JavaScript seconds after audio stops in the background, so the
+  // follow-up song must already be queued (and its URL warmed) before the current one ends.
+  const radioExtendRef = useRef<string | null>(null);
+  const atQueueEnd = queue.length > 0 && queueIndex >= queue.length - 1;
+  useEffect(() => {
+    const id = currentTrack?.id;
+    if (!id || !atQueueEnd || !autoPlayRadio || repeatMode !== 'off' || radioExtendRef.current === id) return;
+    const t = setTimeout(() => {
+      radioExtendRef.current = id;
+      api
+        .getRadio(id)
+        .then((radio) => {
+          if (currentTrackIdRef.current !== id) return;
+          setQueue((prev) => {
+            const have = new Set(prev.map((x) => x.id));
+            const add = radio.filter((x) => !have.has(x.id));
+            return add.length ? [...prev, ...add] : prev;
+          });
+        })
+        .catch(() => {
+          radioExtendRef.current = null;
+        });
+    }, 4000);
+    return () => clearTimeout(t);
+  }, [currentTrack?.id, atQueueEnd, autoPlayRadio, repeatMode]);
+
   // Prefetch next track on the server so skipping / auto-advance starts instantly
   const nextPrefetchId = queue[queueIndex + 1]?.id;
   useEffect(() => {
