@@ -2,62 +2,168 @@
 <html lang="de" class="dark h-full bg-[#030303] text-white" style="background:#030303;color:#fff">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="icon" type="image/svg+xml" href="./icon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <meta name="theme-color" content="#030303" />
     <meta name="color-scheme" content="dark" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="YT Music" />
-    <link rel="apple-touch-icon" href="/icon.svg" />
-    <link rel="manifest" href="/manifest.json" />
+    <link rel="apple-touch-icon" href="./icon.svg" />
+    <link rel="manifest" href="./manifest.json" />
     <title>YouTube Music Mobile</title>
     <style>
-      html, body { background:#030303 !important; color:#fff; margin:0; min-height:100%; }
-      #boot-splash { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; background:#030303; color:#aaa; font:14px -apple-system,Roboto,Arial,sans-serif; z-index:0; text-align:center; padding:24px; }
-      #boot-splash .dot { width:44px; height:44px; border-radius:50%; border:3px solid #ff0033; border-top-color:transparent; animation:bs 0.9s linear infinite; margin-bottom:16px; }
-      @keyframes bs { to { transform:rotate(360deg); } }
-      #boot-error { display:none; position:fixed; inset:0; z-index:99999; background:#030303; color:#fff; padding:24px; overflow:auto; font:13px -apple-system,Roboto,Arial,sans-serif; }
-      #boot-error h1 { font-size:18px; margin:0 0 8px; }
-      #boot-error pre { white-space:pre-wrap; word-break:break-word; background:#161616; border:1px solid #333; border-radius:12px; padding:12px; color:#ff6b6b; font-size:11px; }
-      #boot-error button { margin-top:16px; background:#ff0033; color:#fff; border:0; border-radius:999px; padding:12px 24px; font-size:14px; font-weight:600; }
+      html, body {
+        background: #030303 !important;
+        color: #fff;
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        min-height: 100%;
+      }
+      #root {
+        width: 100%;
+        height: 100%;
+        min-height: 100%;
+      }
+      #boot-splash {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        display: -webkit-box;
+        display: -webkit-flex;
+        display: -ms-flexbox;
+        display: flex;
+        -webkit-box-orient: vertical;
+        -webkit-box-direction: normal;
+        -webkit-flex-direction: column;
+        -ms-flex-direction: column;
+        flex-direction: column;
+        -webkit-box-align: center;
+        -webkit-align-items: center;
+        -ms-flex-align: center;
+        align-items: center;
+        -webkit-box-pack: center;
+        -webkit-justify-content: center;
+        -ms-flex-pack: center;
+        justify-content: center;
+        background: #030303;
+        color: #aaa;
+        font: 14px -apple-system, Roboto, Arial, sans-serif;
+        z-index: 999;
+        text-align: center;
+        padding: 24px;
+        box-sizing: border-box;
+      }
+      #boot-splash .dot {
+        width: 44px;
+        height: 44px;
+        border-radius: 50%;
+        border: 3px solid #ff0033;
+        border-top-color: transparent;
+        -webkit-animation: bs 0.9s linear infinite;
+        animation: bs 0.9s linear infinite;
+        margin-bottom: 16px;
+      }
+      @-webkit-keyframes bs { to { -webkit-transform: rotate(360deg); } }
+      @keyframes bs { to { transform: rotate(360deg); } }
+      #boot-error {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        z-index: 99999;
+        background: #030303;
+        color: #fff;
+        padding: 24px;
+        overflow: auto;
+        box-sizing: border-box;
+        font: 13px -apple-system, Roboto, Arial, sans-serif;
+      }
+      #boot-error h1 { font-size: 18px; margin: 0 0 8px; color: #ff0033; }
+      #boot-error pre {
+        white-space: pre-wrap;
+        word-break: break-word;
+        background: #161616;
+        border: 1px solid #333;
+        border-radius: 12px;
+        padding: 12px;
+        color: #ff6b6b;
+        font-size: 11px;
+      }
+      #boot-error button {
+        margin-top: 16px;
+        background: #ff0033;
+        color: #fff;
+        border: 0;
+        border-radius: 999px;
+        padding: 12px 24px;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+      }
     </style>
     <script>
-      // Defensive boot: show visible errors instead of a blank screen.
+      // Early polyfills for older Android WebViews
       (function () {
+        try {
+          if (typeof window !== 'undefined') {
+            if (!window.AbortSignal) window.AbortSignal = {};
+            if (!window.AbortSignal.timeout) {
+              window.AbortSignal.timeout = function (ms) {
+                var controller = new AbortController();
+                setTimeout(function () { controller.abort(); }, ms);
+                return controller.signal;
+              };
+            }
+          }
+        } catch (e) {}
+
         var msgs = [];
         function show(m) {
           try {
             msgs.push(String(m));
             var el = document.getElementById('boot-error');
             if (!el) return;
-            el.querySelector('pre').textContent = msgs.slice(-5).join('\n\n');
+            var pre = el.querySelector('pre');
+            if (pre) pre.textContent = msgs.slice(-5).join('\n\n');
             el.style.display = 'block';
+            var sp = document.getElementById('boot-splash');
+            if (sp) sp.style.display = 'none';
           } catch (e) {}
         }
         window.__bootShow = show;
         window.addEventListener('error', function (e) {
           var t = e && e.target;
-          if (t && t !== window && (t.src || t.href)) { show('Ressource konnte nicht geladen werden: ' + (t.src || t.href)); return; }
+          if (t && t !== window && (t.src || t.href)) {
+            show('Ressource konnte nicht geladen werden: ' + (t.src || t.href));
+            return;
+          }
           show((e && e.message ? e.message : 'Unbekannter Fehler') + (e && e.filename ? '\n' + e.filename + ':' + e.lineno : ''));
         }, true);
         window.addEventListener('unhandledrejection', function (e) {
-          // Network/API rejections must never blank the app; only log them.
           try { console.error('Unhandled rejection:', e && e.reason); } catch (x) {}
         });
-        // Watchdog: if React has not mounted anything after 8s, show an error.
+        // Watchdog: after 10s if root is still empty
         setTimeout(function () {
           var root = document.getElementById('root');
-          if (root && root.childElementCount === 0) show('Die App konnte nicht gestartet werden (Timeout). Evtl. ist die WebView zu alt oder ein Modul wurde nicht geladen.');
-        }, 8000);
+          if (root && root.childElementCount === 0) {
+            show('Die App konnte nicht gestartet werden (Timeout). Bitte prüfe deine Internetverbindung oder lade die App neu.');
+          }
+        }, 10000);
       })();
     </script>
   </head>
   <body class="h-full bg-[#030303] text-white antialiased select-none overflow-hidden overscroll-none" style="background:#030303">
     <div id="boot-splash"><div class="dot"></div>YT Music wird geladen…</div>
-    <div id="root" class="h-full w-full" style="position:relative;z-index:1"></div>
+    <div id="root" class="h-full w-full"></div>
     <div id="boot-error">
-      <h1>Etwas ist schiefgelaufen</h1>
+      <h1>Start-Problem</h1>
       <p>Die App konnte nicht geladen werden.</p>
       <pre></pre>
       <button onclick="location.reload()">App neu laden</button>
@@ -74,8 +180,9 @@
             navigator.serviceWorker.register('./sw.js').catch(function (e) { console.warn(e); });
           });
         } else if ('serviceWorker' in navigator) {
-          // Clean up any stale worker that could serve broken cached pages.
-          navigator.serviceWorker.getRegistrations().then(function (rs) { rs.forEach(function (r) { r.unregister(); }); }).catch(function () {});
+          navigator.serviceWorker.getRegistrations().then(function (rs) {
+            rs.forEach(function (r) { r.unregister(); });
+          }).catch(function () {});
         }
       } catch (e) {}
     </script>

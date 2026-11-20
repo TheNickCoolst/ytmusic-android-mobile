@@ -22,6 +22,16 @@ const AppContent: React.FC = () => {
   });
 
   useEffect(() => {
+    // Hide boot splash immediately on App mount
+    try {
+      const splash = document.getElementById('boot-splash');
+      if (splash) {
+        splash.style.opacity = '0';
+        splash.style.transition = 'opacity 0.2s ease';
+        setTimeout(() => splash.remove(), 250);
+      }
+    } catch { /* ignore */ }
+
     api.getAuthStatus().then(setUserProfile).catch(console.error);
   }, []);
 
