@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { PlayerProvider, usePlayer } from './context/PlayerContext';
 import { Header } from './components/Header';
 import { Navigation, NavTab } from './components/Navigation';
@@ -10,7 +10,7 @@ import { SearchView } from './components/SearchView';
 import { ExploreView } from './components/ExploreView';
 import { LibraryView } from './components/LibraryView';
 import { api, UserProfile } from './services/api';
-import { initUpdater, applyUpdate, UpdateStatus, currentWebBuild } from './services/updater';
+import { initUpdater, applyUpdate, UpdateStatus, currentWebBuild, installDownloadedApk } from './services/updater';
 import { googleAuthService } from './services/googleAuth';
 import { Capacitor } from '@capacitor/core';
 
@@ -27,9 +27,41 @@ const PlaybackErrorBanner: React.FC = () => {
   );
 };
 
-const UpdateBanner: React.FC<{ status: UpdateStatus | null; onClose: () => void }> = ({ status, onClose }) => {
+const UpdateBanner: React.FC<{ status: UpdateStatus | null; onClose: () => void; onStatus: (s: UpdateStatus) => void }> = ({
+  status,
+  onClose,
+  onStatus,
+}) => {
   const [busy, setBusy] = useState(false);
   if (!status) return null;
+  if (status.type === 'apk') {
+    const text =
+      status.phase === 'downloading'
+        ? `⬇️ Neue Version ${status.version} wird geladen${status.percent && status.percent > 0 ? ` – ${status.percent} %` : '…'}`
+        : status.phase === 'permission'
+          ? `🔓 Einmalig „Apps aus dieser Quelle zulassen“ aktivieren, dann zurück zur App`
+          : status.phase === 'installing'
+            ? `📲 Version ${status.version} bereit – im Fenster auf „Aktualisieren“ tippen`
+            : `⚠️ Update fehlgeschlagen${status.error ? ` (${status.error})` : ''}`;
+    return (
+      <div className="mx-3 mb-2 rounded-xl bg-blue-600/95 px-4 py-2.5 text-sm text-white shadow-lg flex items-center justify-between gap-3">
+        <span className="min-w-0">{text}</span>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {status.phase !== 'downloading' && (
+            <button
+              onClick={() => installDownloadedApk(status.version, status.url, onStatus)}
+              className="rounded-lg bg-white/95 px-2.5 py-1 text-xs font-bold text-blue-700 active:scale-95"
+            >
+              {status.phase === 'error' ? 'Nochmal' : 'Installieren'}
+            </button>
+          )}
+          <button onClick={onClose} className="text-white/80 px-1" aria-label="Schließen">
+            ✕
+          </button>
+        </div>
+      </div>
+    );
+  }
   if (status.type === 'ready') {
     return (
       <div className="mx-3 mb-2 rounded-xl bg-emerald-600/95 px-4 py-2.5 text-sm text-white shadow-lg flex items-center justify-between gap-3">
@@ -80,6 +112,19 @@ const AppContent: React.FC = () => {
   useEffect(() => {
     (window as any).__webBuild = currentWebBuild();
     return initUpdater(setUpdateStatus);
+  }, []);
+  // back from "allow installs from this source" -> open the installer right away
+  const updateRef = useRef<UpdateStatus | null>(null);
+  updateRef.current = updateStatus;
+  useEffect(() => {
+    const onVis = () => {
+      const s = updateRef.current;
+      if (document.visibilityState === 'visible' && s?.type === 'apk' && s.phase === 'permission') {
+        installDownloadedApk(s.version, s.url, setUpdateStatus);
+      }
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
   }, []);
 
   const [activeTab, setActiveTab] = useState<NavTab>('home');
@@ -172,7 +217,7 @@ const AppContent: React.FC = () => {
       <div className="fixed left-0 right-0 z-[45] bottom-[calc(56px+max(var(--sab),8px)+76px)] pointer-events-none">
         <div className="pointer-events-auto">
           <PlaybackErrorBanner />
-          <UpdateBanner status={updateStatus} onClose={() => setUpdateStatus(null)} />
+          <UpdateBanner status={updateStatus} onClose={() => setUpdateStatus(null)} onStatus={setUpdateStatus} />
         </div>
       </div>
 

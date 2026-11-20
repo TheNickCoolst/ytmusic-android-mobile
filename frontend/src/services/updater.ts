@@ -1,6 +1,6 @@
 // Self-updating app: the web part (all of the UI + logic) updates itself from GitHub Releases.
 // Native changes (new Android/iOS shell) are announced so the user can reinstall.
-import { Capacitor, CapacitorHttp } from '@capacitor/core';
+import { Capacitor, CapacitorHttp, registerPlugin } from '@capacitor/core';
 import { CapacitorUpdater } from '@capgo/capacitor-updater';
 
 const REPO = 'TheNickCoolst/ytmusic-android-mobile';
@@ -18,7 +18,84 @@ export interface UpdateInfo {
 
 export type UpdateStatus =
   | { type: 'ready'; version: number; bundleId: string; notes?: string }
-  | { type: 'native'; info: UpdateInfo };
+  | { type: 'native'; info: UpdateInfo }
+  | {
+      type: 'apk';
+      version: string;
+      url: string;
+      phase: 'downloading' | 'installing' | 'permission' | 'error';
+      percent?: number;
+      error?: string;
+    };
+
+// ---------- native Android update (new APK from the latest GitHub release) ----------
+interface ApkUpdaterPlugin {
+  getInfo(): Promise<{ versionName: string; versionCode: number; canInstall: boolean }>;
+  downloadAndInstall(o: { url: string }): Promise<{ status: 'installer_opened' | 'needs_permission' }>;
+  install(): Promise<{ status: 'installer_opened' | 'needs_permission' }>;
+  addListener(ev: 'progress', cb: (e: { percent: number }) => void): Promise<{ remove: () => Promise<void> }>;
+}
+const ApkUpdater = registerPlugin<ApkUpdaterPlugin>('ApkUpdater');
+const apkHandled = new Set<string>();
+
+/** Android: newer APK on GitHub? Then download it and open the installer automatically. */
+export const checkApkUpdate = async (onStatus: (s: UpdateStatus) => void): Promise<boolean> => {
+  if (Capacitor.getPlatform() !== 'android') return false;
+  try {
+    const res = await CapacitorHttp.get({
+      url: `https://api.github.com/repos/${REPO}/releases/latest`,
+      headers: { Accept: 'application/vnd.github+json' },
+      connectTimeout: 10000,
+      readTimeout: 15000,
+    });
+    if (res.status !== 200) return false;
+    const rel = typeof res.data === 'string' ? JSON.parse(res.data) : res.data;
+    const version = String(rel?.tag_name || '').replace(/^v/, '');
+    const asset = (rel?.assets || []).find((a: any) => typeof a?.name === 'string' && a.name.endsWith('.apk'));
+    if (!version || !asset?.browser_download_url) return false;
+
+    if (!Capacitor.isPluginAvailable('ApkUpdater')) {
+      // old app shell without the updater: announce it with a download link
+      const native = (await CapacitorUpdater.getBuiltinVersion()).version || '0';
+      if (cmpVersion(version, native) <= 0) return false;
+      onStatus({ type: 'native', info: { apk: asset.browser_download_url } as UpdateInfo });
+      return true;
+    }
+    const info = await ApkUpdater.getInfo();
+    if (cmpVersion(version, info.versionName) <= 0 || apkHandled.has(version)) return false;
+    apkHandled.add(version);
+    void runApkUpdate(asset.browser_download_url, version, onStatus);
+    return true;
+  } catch (e) {
+    console.warn('apk update check failed', e);
+    return false;
+  }
+};
+
+export const runApkUpdate = async (url: string, version: string, onStatus: (s: UpdateStatus) => void) => {
+  const base = { type: 'apk' as const, version, url };
+  onStatus({ ...base, phase: 'downloading', percent: 0 });
+  const sub = await ApkUpdater.addListener('progress', (e) => onStatus({ ...base, phase: 'downloading', percent: e.percent }));
+  try {
+    const r = await ApkUpdater.downloadAndInstall({ url });
+    onStatus({ ...base, phase: r.status === 'needs_permission' ? 'permission' : 'installing' });
+  } catch (e: any) {
+    console.warn('apk update failed', e);
+    onStatus({ ...base, phase: 'error', error: e?.message || String(e) });
+  } finally {
+    await sub.remove();
+  }
+};
+
+/** Open the installer again for the downloaded APK (after allowing installs / dismissing it). */
+export const installDownloadedApk = async (version: string, url: string, onStatus: (s: UpdateStatus) => void) => {
+  try {
+    const r = await ApkUpdater.install();
+    onStatus({ type: 'apk', version, url, phase: r.status === 'needs_permission' ? 'permission' : 'installing' });
+  } catch {
+    void runApkUpdate(url, version, onStatus);
+  }
+};
 
 export const currentWebBuild = (): number => (typeof __WEB_BUILD__ === 'number' ? __WEB_BUILD__ : 0);
 
@@ -99,8 +176,12 @@ export const initUpdater = (onStatus: (s: UpdateStatus) => void): (() => void) =
       console.warn('updater init failed', e);
     }
   })();
-  const first = setTimeout(() => checkForUpdate(onStatus), 8000);
-  const every = setInterval(() => checkForUpdate(onStatus), 6 * 60 * 60 * 1000);
+  // a new APK wins; otherwise check for a web update
+  const check = async () => {
+    if (!(await checkApkUpdate(onStatus))) await checkForUpdate(onStatus);
+  };
+  const first = setTimeout(check, 8000);
+  const every = setInterval(check, 6 * 60 * 60 * 1000);
   return () => {
     clearTimeout(first);
     clearInterval(every);
