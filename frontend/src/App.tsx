@@ -168,8 +168,13 @@ const AppContent: React.FC = () => {
         )}
       </main>
 
-      <PlaybackErrorBanner />
-      <UpdateBanner status={updateStatus} onClose={() => setUpdateStatus(null)} />
+      {/* Banners float above mini player + navigation */}
+      <div className="fixed left-0 right-0 z-[45] bottom-[calc(56px+max(var(--sab),8px)+76px)] pointer-events-none">
+        <div className="pointer-events-auto">
+          <PlaybackErrorBanner />
+          <UpdateBanner status={updateStatus} onClose={() => setUpdateStatus(null)} />
+        </div>
+      </div>
 
       {/* Mini Player */}
       <MiniPlayer />
