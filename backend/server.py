@@ -199,6 +199,24 @@ async def login_with_headers_or_cookie(payload: Dict[str, str] = Body(...)):
     parsed_headers.update(init)
 
     if "cookie" in parsed_headers:
+        cookie_str = parsed_headers["cookie"]
+        # Ensure __Secure-3PAPISID is present if SAPISID is present, and vice-versa
+        import re
+        if "__Secure-3PAPISID" not in cookie_str and "SAPISID=" in cookie_str:
+            m = re.search(r'SAPISID=([^;]+)', cookie_str)
+            if m:
+                cookie_str += f"; __Secure-3PAPISID={m.group(1).strip()}"
+        elif "SAPISID" not in cookie_str and "__Secure-3PAPISID=" in cookie_str:
+            m = re.search(r'__Secure-3PAPISID=([^;]+)', cookie_str)
+            if m:
+                cookie_str += f"; SAPISID={m.group(1).strip()}"
+        parsed_headers["cookie"] = cookie_str
+
+        if "origin" not in parsed_headers:
+            parsed_headers["origin"] = "https://music.youtube.com"
+        if "x-origin" not in parsed_headers:
+            parsed_headers["x-origin"] = "https://music.youtube.com"
+
         try:
             sapisid = sapisid_from_cookie(parsed_headers["cookie"])
             parsed_headers["authorization"] = get_authorization(f"{sapisid} https://music.youtube.com")
@@ -207,7 +225,22 @@ async def login_with_headers_or_cookie(payload: Dict[str, str] = Body(...)):
 
     try:
         test_client = YTMusic(auth=parsed_headers)
-        acc_info = test_client.get_account_info()
+        name = "Google Benutzer"
+        handle = "@youtube"
+        avatar = "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150"
+
+        try:
+            acc_info = test_client.get_account_info()
+            if acc_info.get("accountName"):
+                name = acc_info.get("accountName")
+            if acc_info.get("channelHandle"):
+                handle = acc_info.get("channelHandle")
+            if acc_info.get("accountPhotoUrl"):
+                avatar = acc_info.get("accountPhotoUrl")
+        except Exception as acc_err:
+            print(f"Notice: get_account_info fallback ({acc_err})")
+            # Verify library access
+            test_client.get_library_playlists(limit=1)
         
         # Success! Save to file
         with open(AUTH_FILE, "w") as f:
@@ -216,9 +249,9 @@ async def login_with_headers_or_cookie(payload: Dict[str, str] = Body(...)):
         yt = test_client
         user_profile = {
             "isLoggedIn": True,
-            "name": acc_info.get("accountName", "Google User"),
-            "handle": acc_info.get("channelHandle"),
-            "avatar": acc_info.get("accountPhotoUrl", "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150")
+            "name": name,
+            "handle": handle,
+            "avatar": avatar
         }
         return {"status": "success", "profile": user_profile}
     except Exception as e:
