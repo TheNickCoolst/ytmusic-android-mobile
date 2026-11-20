@@ -2,9 +2,11 @@ package com.ytmusic.mobile;
 
 import android.app.Dialog;
 import android.content.Context;
+import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.net.Uri;
 import android.os.Bundle;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -40,7 +42,31 @@ public class GoogleAuthPlugin extends Plugin {
     private PluginCall activeCall;
 
     @PluginMethod
+    public void openSystemBrowser(PluginCall call) {
+        getActivity().runOnUiThread(() -> {
+            try {
+                String url = call.getString("url", YOUTUBE_MUSIC_LOGIN_URL);
+                Intent browserIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+                browserIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                getContext().startActivity(browserIntent);
+                JSObject ret = new JSObject();
+                ret.put("status", "browser_opened");
+                ret.put("url", url);
+                call.resolve(ret);
+            } catch (Exception e) {
+                call.reject("Fehler beim Öffnen des mobilen Browsers: " + e.getMessage());
+            }
+        });
+    }
+
+    @PluginMethod
     public void signIn(PluginCall call) {
+        // As requested: Open normal mobile browser!
+        openSystemBrowser(call);
+    }
+
+    @PluginMethod
+    public void signInEmbedded(PluginCall call) {
         getActivity().runOnUiThread(() -> {
             try {
                 this.activeCall = call;

@@ -1,7 +1,9 @@
 import { registerPlugin, Capacitor } from '@capacitor/core';
 
 export interface GoogleAuthPluginInterface {
-  signIn(): Promise<{ status: string; cookie: string }>;
+  signIn(): Promise<{ status: string; url?: string; cookie?: string }>;
+  openSystemBrowser(options?: { url?: string }): Promise<{ status: string; url?: string }>;
+  signInEmbedded(): Promise<{ status: string; cookie: string }>;
   signOut(): Promise<{ status: string }>;
 }
 
@@ -12,18 +14,22 @@ export const googleAuthService = {
     return Capacitor.isNativePlatform();
   },
 
-  async signIn(): Promise<{ status: string; cookie: string }> {
+  async openSystemBrowser(url?: string): Promise<void> {
+    const loginUrl =
+      url ||
+      'https://accounts.google.com/ServiceLogin?service=youtube&passive=true&continue=https%3A%2F%2Fmusic.youtube.com%2F';
+
     if (Capacitor.isNativePlatform()) {
-      return await NativeGoogleAuth.signIn();
+      await NativeGoogleAuth.openSystemBrowser({ url: loginUrl });
     } else {
-      // In web browser: open Google login in a popup window
-      const loginUrl =
-        'https://accounts.google.com/ServiceLogin?service=youtube&passive=true&continue=https%3A%2F%2Fmusic.youtube.com%2F';
-      window.open(loginUrl, '_blank', 'width=500,height=650');
-      throw new Error(
-        'Im Browser geöffnet! In der Android-App (APK) funktioniert der Google-Login vollautomatisch mit 1 Klick. Im Desktop-Browser bitte das Cookie unten einfügen.'
-      );
+      window.open(loginUrl, '_blank');
     }
+  },
+
+  async signIn(): Promise<{ status: string; url?: string; cookie?: string }> {
+    // Opens the user's normal mobile browser directly as requested
+    await this.openSystemBrowser();
+    return { status: 'browser_opened' };
   },
 
   async signOut(): Promise<void> {

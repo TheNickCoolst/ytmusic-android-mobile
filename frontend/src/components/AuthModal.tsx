@@ -11,8 +11,10 @@ import {
   Copy,
   ChevronDown,
   ChevronUp,
-  ShieldCheck,
-  Smartphone
+  ExternalLink,
+  Smartphone,
+  ListMusic,
+  Check
 } from 'lucide-react';
 import { UserProfile, api } from '../services/api';
 import { googleAuthService } from '../services/googleAuth';
@@ -31,34 +33,73 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   onProfileUpdate,
 }) => {
   const [authInput, setAuthInput] = useState('');
+  const [playlistUrlInput, setPlaylistUrlInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [playlistLoading, setPlaylistLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [infoMsg, setInfoMsg] = useState<string | null>(null);
+  const [browserOpened, setBrowserOpened] = useState(false);
+  const [codeCopied, setCodeCopied] = useState(false);
   const [showManual, setShowManual] = useState(false);
+  const [showPlaylistImport, setShowPlaylistImport] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
 
   if (!isOpen) return null;
 
-  // 1-Click Normal Google Account Login
-  const handleGoogleLogin = async () => {
+  // Opens the user's normal mobile browser directly (as requested)
+  const handleOpenNormalBrowser = async () => {
     setGoogleLoading(true);
     setError(null);
     setInfoMsg(null);
 
     try {
-      const res = await googleAuthService.signIn();
-      if (res && res.cookie) {
-        setInfoMsg('Google-Authentifizierung erfolgreich! Lade YouTube Music Profil...');
-        const loginRes = await api.login(res.cookie);
-        onProfileUpdate(loginRes.profile);
-        onClose();
-      }
+      await googleAuthService.openSystemBrowser();
+      setBrowserOpened(true);
+      setInfoMsg(
+        'Normaler Handy-Browser (z.B. Chrome) wurde geöffnet! Melde dich dort an und füge die Anmeldung anschließend unten ein.'
+      );
     } catch (err: any) {
-      console.warn('Google sign-in error:', err);
-      setError(err.message || 'Google-Anmeldung abgebrochen oder fehlgeschlagen.');
+      console.warn('Error opening mobile browser:', err);
+      setError(err.message || 'Mobiler Browser konnte nicht geöffnet werden.');
     } finally {
       setGoogleLoading(false);
+    }
+  };
+
+  // 1-Click Paste & Login from Clipboard
+  const handlePasteAndLogin = async () => {
+    setLoading(true);
+    setError(null);
+    setInfoMsg(null);
+
+    try {
+      let text = '';
+      try {
+        text = await navigator.clipboard.readText();
+      } catch {
+        setError('Zwischenablage konnte nicht automatisch gelesen werden. Bitte manuell einfügen.');
+        setLoading(false);
+        setShowManual(true);
+        return;
+      }
+
+      if (!text || !text.trim()) {
+        setError('Die Zwischenablage ist leer. Kopiere zuerst deine Anmeldung aus dem Browser.');
+        setLoading(false);
+        return;
+      }
+
+      setAuthInput(text);
+      const res = await api.login(text);
+      onProfileUpdate(res.profile);
+      setInfoMsg('Erfolgreich mit deinem Google-Konto verbunden!');
+      setTimeout(() => onClose(), 800);
+    } catch (err: any) {
+      setError(err.message || 'Anmeldung fehlgeschlagen. Bitte prüfe die Daten.');
+      setShowManual(true);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -86,6 +127,54 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
   };
 
+  // Import Playlist without login
+  const handleImportPlaylist = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const raw = playlistUrlInput.trim();
+    if (!raw) return;
+
+    let playlistId = raw;
+    const listMatch = raw.match(/[?&]list=([^#&]+)/);
+    if (listMatch) playlistId = listMatch[1];
+
+    setPlaylistLoading(true);
+    setError(null);
+    setInfoMsg(null);
+
+    try {
+      const pl = await api.getPlaylist(playlistId);
+      if (pl && pl.tracks && pl.tracks.length > 0) {
+        // Save to local playlists
+        const saved = localStorage.getItem('ytmusic_playlists');
+        const list = saved ? JSON.parse(saved) : [];
+        list.unshift({
+          id: pl.id,
+          title: pl.title,
+          description: pl.description || 'Importierte YouTube Playlist',
+          thumbnail: pl.thumbnail,
+          tracks: pl.tracks,
+          createdAt: new Date().toISOString()
+        });
+        localStorage.setItem('ytmusic_playlists', JSON.stringify(list));
+        setInfoMsg(`Playlist "${pl.title}" (${pl.tracks.length} Lieder) erfolgreich importiert!`);
+        setPlaylistUrlInput('');
+      } else {
+        setError('Keine Lieder in dieser Playlist gefunden.');
+      }
+    } catch (err: any) {
+      setError(err.message || 'Playlist konnte nicht geladen werden. Ist der Link öffentlich?');
+    } finally {
+      setPlaylistLoading(false);
+    }
+  };
+
+  const handleCopySnippet = () => {
+    const code = "javascript:navigator.clipboard.writeText(document.cookie);alert('Anmeldung kopiert! Gehe zurück zur App');";
+    navigator.clipboard.writeText(code);
+    setCodeCopied(true);
+    setTimeout(() => setCodeCopied(false), 3000);
+  };
+
   const handleLogout = async () => {
     setLoading(true);
     try {
@@ -97,15 +186,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       console.error('Logout error:', err);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handlePasteClipboard = async () => {
-    try {
-      const text = await navigator.clipboard.readText();
-      setAuthInput(text);
-    } catch {
-      setError('Konnte nicht aus der Zwischenablage einfügen. Bitte manuell einfügen.');
     }
   };
 
@@ -159,7 +239,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             <button
               onClick={handleLogout}
               disabled={loading}
-              className="mt-6 w-full py-2.5 px-4 rounded-xl bg-white/10 hover:bg-red-600/20 text-zinc-200 hover:text-red-400 border border-white/10 transition flex items-center justify-center space-x-2 font-medium text-sm active:scale-95"
+              className="mt-6 w-full py-2.5 px-4 rounded-xl bg-white/10 hover:bg-red-600/20 text-zinc-200 hover:text-red-400 border border-white/10 transition flex items-center justify-center space-x-2 font-medium text-sm active:scale-95 cursor-pointer"
             >
               {loading ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -174,14 +254,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           <div>
             <div className="flex items-center space-x-3 mb-4">
               <div className="w-10 h-10 rounded-xl bg-red-600/20 border border-red-500/30 flex items-center justify-center text-red-500">
-                <ShieldCheck className="w-5 h-5 text-red-500" />
+                <Smartphone className="w-5 h-5 text-red-500" />
               </div>
               <div>
                 <h2 className="text-lg font-bold text-white">
-                  Mit Google-Konto anmelden
+                  Mit Google anmelden
                 </h2>
                 <p className="text-xs text-zinc-400">
-                  Verbinde dein normales YouTube / Google Konto
+                  Über deinen normalen Handy-Browser (z.B. Chrome)
                 </p>
               </div>
             </div>
@@ -200,22 +280,22 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               </div>
             )}
 
-            {/* NORMAL GOOGLE LOGIN BUTTON */}
+            {/* STEP 1: OPEN NORMAL MOBILE BROWSER BUTTON */}
             <div className="space-y-3">
               <button
                 type="button"
-                onClick={handleGoogleLogin}
-                disabled={googleLoading || loading}
+                onClick={handleOpenNormalBrowser}
+                disabled={googleLoading}
                 className="w-full py-3.5 px-4 rounded-xl bg-white hover:bg-zinc-100 text-zinc-900 font-semibold text-sm active:scale-98 transition flex items-center justify-center space-x-3 shadow-xl cursor-pointer"
               >
                 {googleLoading ? (
                   <>
                     <Loader2 className="w-5 h-5 animate-spin text-zinc-900" />
-                    <span>Google-Anmeldung wird geöffnet...</span>
+                    <span>Browser wird geöffnet...</span>
                   </>
                 ) : (
                   <>
-                    {/* Official Google G Logo */}
+                    {/* Google Icon */}
                     <svg className="w-5 h-5" viewBox="0 0 24 24">
                       <path
                         fill="#4285F4"
@@ -234,103 +314,155 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                         d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
                       />
                     </svg>
-                    <span>Mit Google anmelden</span>
+                    <span>Im normalen Handy-Browser öffnen</span>
+                    <ExternalLink className="w-4 h-4 text-zinc-500 ml-1" />
                   </>
                 )}
               </button>
 
-              <div className="flex items-center space-x-2 text-[11px] text-zinc-400 bg-white/5 p-2.5 rounded-xl border border-white/5">
-                <Smartphone className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-                <span>
-                  Normaler Google-Login: Gib einfach deine normale Google-Mail & Passwort ein. Deine Playlists und Likes werden sofort synchronisiert.
-                </span>
+              {/* STEP 2: PASTE & CONNECT FROM CLIPBOARD */}
+              <button
+                type="button"
+                onClick={handlePasteAndLogin}
+                disabled={loading}
+                className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-red-600 to-red-500 hover:from-red-500 hover:to-red-600 text-white font-semibold text-xs active:scale-98 transition flex items-center justify-center space-x-2 shadow-lg shadow-red-600/20 cursor-pointer"
+              >
+                {loading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin text-white" />
+                    <span>Verbindung wird geprüft...</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-4 h-4" />
+                    <span>Aus Zwischenablage einfügen & Verbinden</span>
+                  </>
+                )}
+              </button>
+
+              <div className="bg-white/5 p-3 rounded-xl border border-white/5 text-[11px] text-zinc-400 space-y-2">
+                <p>
+                  <strong>So funktioniert es:</strong>
+                  <br />
+                  1. Tippe oben auf <strong>„Im normalen Handy-Browser öffnen“</strong>.
+                  <br />
+                  2. Melde dich bei YouTube Music an.
+                  <br />
+                  3. Kopiere den Code oder das Cookie und tippe auf <strong>„Aus Zwischenablage einfügen“</strong>.
+                </p>
+
+                <button
+                  type="button"
+                  onClick={handleCopySnippet}
+                  className="w-full py-1.5 px-2.5 rounded-lg bg-black/40 hover:bg-black/60 border border-white/10 text-[10px] text-zinc-300 flex items-center justify-between cursor-pointer"
+                >
+                  <span className="truncate mr-2 font-mono text-zinc-400">
+                    Kopier-Hilfe für den Browser (1 Klick)
+                  </span>
+                  {codeCopied ? (
+                    <span className="text-emerald-400 flex items-center space-x-1 flex-shrink-0">
+                      <Check className="w-3 h-3" />
+                      <span>Kopiert!</span>
+                    </span>
+                  ) : (
+                    <span className="text-red-400 flex items-center space-x-1 flex-shrink-0">
+                      <Copy className="w-3 h-3" />
+                      <span>Code kopieren</span>
+                    </span>
+                  )}
+                </button>
               </div>
             </div>
 
-            {/* Manual Cookie/Header Option Toggle */}
-            <div className="mt-5 pt-4 border-t border-white/5">
+            {/* OPTION B: PLAYLIST IMPORT BY URL / LINK (NO LOGIN REQUIRED) */}
+            <div className="mt-4 pt-3 border-t border-white/5">
               <button
                 type="button"
-                onClick={() => setShowManual(!showManual)}
-                className="flex items-center justify-between w-full text-xs text-zinc-400 hover:text-zinc-200 transition"
+                onClick={() => setShowPlaylistImport(!showPlaylistImport)}
+                className="flex items-center justify-between w-full text-xs text-zinc-300 hover:text-white transition font-medium"
               >
-                <span>Alternative: Manuelle Anmeldung (Cookie / Headers)</span>
-                {showManual ? (
+                <span className="flex items-center space-x-2">
+                  <ListMusic className="w-4 h-4 text-red-500" />
+                  <span>Oder: Eigene Playlist per YouTube-Link importieren</span>
+                </span>
+                {showPlaylistImport ? (
                   <ChevronUp className="w-4 h-4" />
                 ) : (
                   <ChevronDown className="w-4 h-4" />
                 )}
               </button>
 
-              {showManual && (
-                <form onSubmit={handleManualLogin} className="space-y-3 mt-3 animate-in fade-in duration-150">
-                  <div>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <label className="text-xs font-semibold text-zinc-300">
-                        Cookie oder Request-Headers
-                      </label>
-                      <button
-                        type="button"
-                        onClick={handlePasteClipboard}
-                        className="text-[11px] text-red-400 hover:text-red-300 flex items-center space-x-1"
-                      >
-                        <Copy className="w-3 h-3" />
-                        <span>Einfügen</span>
-                      </button>
-                    </div>
-                    <textarea
-                      rows={3}
-                      value={authInput}
-                      onChange={(e) => setAuthInput(e.target.value)}
-                      placeholder="SAPISID=...; SSID=... oder Raw Headers"
-                      className="w-full bg-[#0a0a0a] border border-white/10 rounded-xl p-3 text-xs text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-red-500 font-mono resize-none"
-                    />
-                  </div>
-
+              {showPlaylistImport && (
+                <form
+                  onSubmit={handleImportPlaylist}
+                  className="space-y-2.5 mt-3 animate-in fade-in duration-150"
+                >
+                  <p className="text-[11px] text-zinc-400">
+                    Füge einfach den Link einer öffentlichen oder nicht-gelisteten YouTube-Playlist ein – kein Passwort oder Cookie nötig!
+                  </p>
+                  <input
+                    type="text"
+                    value={playlistUrlInput}
+                    onChange={(e) => setPlaylistUrlInput(e.target.value)}
+                    placeholder="https://music.youtube.com/playlist?list=..."
+                    className="w-full bg-[#0a0a0a] border border-white/10 rounded-xl px-3 py-2 text-xs text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-red-500"
+                  />
                   <button
                     type="submit"
-                    disabled={loading}
-                    className="w-full py-2.5 px-4 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs active:scale-95 transition flex items-center justify-center space-x-2"
+                    disabled={playlistLoading}
+                    className="w-full py-2 px-3 rounded-xl bg-white/10 hover:bg-white/20 text-white font-medium text-xs active:scale-95 transition flex items-center justify-center space-x-2 cursor-pointer"
                   >
-                    {loading ? (
-                      <>
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        <span>Prüfen...</span>
-                      </>
+                    {playlistLoading ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
                     ) : (
-                      <>
-                        <LogIn className="w-3.5 h-3.5" />
-                        <span>Manuell verbinden</span>
-                      </>
+                      <ListMusic className="w-3.5 h-3.5" />
                     )}
+                    <span>Playlist in Mediathek laden</span>
                   </button>
                 </form>
               )}
             </div>
 
-            {/* How-To Accordion */}
-            <div className="mt-4 border-t border-white/5 pt-3">
+            {/* OPTION C: MANUAL COOKIE / HEADERS */}
+            <div className="mt-3 pt-3 border-t border-white/5">
               <button
                 type="button"
-                onClick={() => setShowHelp(!showHelp)}
-                className="flex items-center justify-between w-full text-[11px] text-zinc-500 hover:text-zinc-300"
+                onClick={() => setShowManual(!showManual)}
+                className="flex items-center justify-between w-full text-[11px] text-zinc-500 hover:text-zinc-300 transition"
               >
-                <span className="flex items-center space-x-1.5 font-medium">
-                  <HelpCircle className="w-3.5 h-3.5" />
-                  <span>Sicherheit & Datenschutz</span>
-                </span>
-                <span className="text-zinc-500">{showHelp ? '▲' : '▼'}</span>
+                <span>Manuelle Eingabe (Cookie / Raw Headers)</span>
+                {showManual ? (
+                  <ChevronUp className="w-3.5 h-3.5" />
+                ) : (
+                  <ChevronDown className="w-3.5 h-3.5" />
+                )}
               </button>
 
-              {showHelp && (
-                <div className="mt-2.5 p-3 bg-white/5 rounded-xl text-[11px] text-zinc-400 space-y-1.5 border border-white/5">
-                  <p>
-                    ✓ <strong>Sicher & Direkt:</strong> Die Anmeldung erfolgt direkt bei Google über den geschützten Google-Anmeldedienst.
-                  </p>
-                  <p>
-                    ✓ <strong>Keine Passwortspeicherung:</strong> Dein Passwort wird niemals gespeichert, sondern nur ein lokaler Sitzungstoken für deine eigene YouTube Music Mediathek.
-                  </p>
-                </div>
+              {showManual && (
+                <form
+                  onSubmit={handleManualLogin}
+                  className="space-y-3 mt-3 animate-in fade-in duration-150"
+                >
+                  <textarea
+                    rows={3}
+                    value={authInput}
+                    onChange={(e) => setAuthInput(e.target.value)}
+                    placeholder="SAPISID=...; SSID=... oder Raw Headers"
+                    className="w-full bg-[#0a0a0a] border border-white/10 rounded-xl p-3 text-xs text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-red-500 font-mono resize-none"
+                  />
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="w-full py-2 px-3 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs active:scale-95 transition flex items-center justify-center space-x-2 cursor-pointer"
+                  >
+                    {loading ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <LogIn className="w-3.5 h-3.5" />
+                    )}
+                    <span>Manuell verbinden</span>
+                  </button>
+                </form>
               )}
             </div>
           </div>
