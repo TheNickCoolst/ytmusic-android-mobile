@@ -14,7 +14,7 @@ export const googleAuthService = {
     return Capacitor.isNativePlatform();
   },
 
-  /** In-app Google login window exists (Android APK); iOS uses the manual cookie fallback for now. */
+  /** In-app Google login window exists (Android + iOS native plugin). */
   hasInAppLogin(): boolean {
     return Capacitor.isNativePlatform() && Capacitor.isPluginAvailable('GoogleAuth');
   },
@@ -31,7 +31,7 @@ export const googleAuthService = {
     }
   },
 
-  /** Google login inside an app window; returns the YouTube Music cookie (APK only). */
+  /** Google login inside an app window; returns the YouTube Music cookie. */
   async signInInApp(): Promise<string> {
     const res = await NativeGoogleAuth.signInEmbedded();
     if (!res?.cookie) throw new Error('Keine Anmeldedaten erhalten');
