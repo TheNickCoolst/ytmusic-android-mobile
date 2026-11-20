@@ -10,6 +10,9 @@ import { SearchView } from './components/SearchView';
 import { ExploreView } from './components/ExploreView';
 import { LibraryView } from './components/LibraryView';
 import { api, UserProfile } from './services/api';
+import { initUpdater, applyUpdate, UpdateStatus, currentWebBuild } from './services/updater';
+import { googleAuthService } from './services/googleAuth';
+import { Capacitor } from '@capacitor/core';
 
 const PlaybackErrorBanner: React.FC = () => {
   const { playbackError, clearPlaybackError } = usePlayer();
@@ -24,7 +27,61 @@ const PlaybackErrorBanner: React.FC = () => {
   );
 };
 
+const UpdateBanner: React.FC<{ status: UpdateStatus | null; onClose: () => void }> = ({ status, onClose }) => {
+  const [busy, setBusy] = useState(false);
+  if (!status) return null;
+  if (status.type === 'ready') {
+    return (
+      <div className="mx-3 mb-2 rounded-xl bg-emerald-600/95 px-4 py-2.5 text-sm text-white shadow-lg flex items-center justify-between gap-3">
+        <span className="min-w-0">✨ Update geladen – wird beim nächsten Start aktiv</span>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <button
+            disabled={busy}
+            onClick={() => {
+              setBusy(true);
+              applyUpdate(status.bundleId).catch(() => setBusy(false));
+            }}
+            className="rounded-lg bg-white/95 px-2.5 py-1 text-xs font-bold text-emerald-700 active:scale-95"
+          >
+            {busy ? '…' : 'Jetzt'}
+          </button>
+          <button onClick={onClose} className="text-white/80 px-1" aria-label="Schließen">
+            ✕
+          </button>
+        </div>
+      </div>
+    );
+  }
+  const isAndroid = Capacitor.getPlatform() === 'android';
+  return (
+    <div className="mx-3 mb-2 rounded-xl bg-blue-600/95 px-4 py-2.5 text-sm text-white shadow-lg flex items-center justify-between gap-3">
+      <span className="min-w-0">
+        📲 Neue App-Version verfügbar{isAndroid ? '' : ' – in SideStore aktualisieren'}
+      </span>
+      <div className="flex items-center gap-2 flex-shrink-0">
+        {isAndroid && status.info.apk && (
+          <button
+            onClick={() => googleAuthService.openSystemBrowser(status.info.apk).catch(() => {})}
+            className="rounded-lg bg-white/95 px-2.5 py-1 text-xs font-bold text-blue-700 active:scale-95"
+          >
+            Laden
+          </button>
+        )}
+        <button onClick={onClose} className="text-white/80 px-1" aria-label="Schließen">
+          ✕
+        </button>
+      </div>
+    </div>
+  );
+};
+
 const AppContent: React.FC = () => {
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
+  useEffect(() => {
+    (window as any).__webBuild = currentWebBuild();
+    return initUpdater(setUpdateStatus);
+  }, []);
+
   const [activeTab, setActiveTab] = useState<NavTab>('home');
   const [activeMoodFilter, setActiveMoodFilter] = useState<string | null>(null);
   const [moodChips, setMoodChips] = useState<string[] | null>(null);
@@ -112,6 +169,7 @@ const AppContent: React.FC = () => {
       </main>
 
       <PlaybackErrorBanner />
+      <UpdateBanner status={updateStatus} onClose={() => setUpdateStatus(null)} />
 
       {/* Mini Player */}
       <MiniPlayer />

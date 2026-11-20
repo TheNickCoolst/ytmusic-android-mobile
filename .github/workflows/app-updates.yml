@@ -1,0 +1,130 @@
+name: App updates (self-update bundle + iPhone app)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/app-updates.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: app-updates
+  cancel-in-progress: false
+
+jobs:
+  # Web bundle that installed apps (Android + iPhone) download and apply by themselves
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - name: Build web bundle
+        working-directory: frontend
+        run: |
+          echo "WEB_BUILD=$(git rev-list --count HEAD)" >> "$GITHUB_ENV"
+          bun install --frozen-lockfile
+          WEB_BUILD=$(git rev-list --count HEAD) bun run build
+      - name: Package + publish to "web-latest"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          cd frontend/dist && zip -qr "../../web-${WEB_BUILD}.zip" . && cd ../..
+          MIN_NATIVE=$(cat frontend/min-native.txt | tr -d '[:space:]')
+          cat > latest.json <<JSON
+          {
+            "version": ${WEB_BUILD},
+            "url": "https://github.com/${REPO}/releases/download/web-latest/web-${WEB_BUILD}.zip",
+            "minNative": "${MIN_NATIVE}",
+            "apk": "https://github.com/${REPO}/releases/latest/download/ytmusic-mobile.apk",
+            "ipa": "https://github.com/${REPO}/releases/download/ios-latest/ytmusic-mobile.ipa",
+            "notes": $(git log -1 --pretty=%s | jq -Rs .)
+          }
+          JSON
+          cat latest.json
+          gh release view web-latest >/dev/null 2>&1 || \
+            gh release create web-latest --prerelease --title "App-Selbst-Update (automatisch)" \
+              --notes "Wird von der App automatisch geladen. Nicht manuell installieren."
+          gh release upload web-latest "web-${WEB_BUILD}.zip" --clobber
+          gh release upload web-latest latest.json --clobber
+          # keep only the 3 newest bundles
+          gh release view web-latest --json assets --jq '.assets[].name' | grep '^web-[0-9]*\.zip$' \
+            | sort -t- -k2 -n | head -n -3 | while read -r old; do gh release delete-asset web-latest "$old" -y; done
+
+  # Unsigned iPhone app + SideStore/AltStore source (store-like install & auto-refresh)
+  ios:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - uses: oven-sh/setup-bun@v2
+      - name: Build web app + sync iOS
+        working-directory: frontend
+        run: |
+          echo "WEB_BUILD=$(git rev-list --count HEAD)" >> "$GITHUB_ENV"
+          bun install --frozen-lockfile
+          WEB_BUILD=$(git rev-list --count HEAD) bun run build
+          npx cap sync ios
+      - name: Build iOS app (unsigned – SideStore/Sideloadly sign it with your Apple ID)
+        working-directory: frontend/ios/App
+        run: |
+          xcodebuild -project App.xcodeproj -scheme App -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build \
+            CURRENT_PROJECT_VERSION=${WEB_BUILD} \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build | tail -30
+      - name: Package IPA + store source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          cd frontend/ios/App && mkdir -p Payload && cp -R build/Build/Products/Release-iphoneos/App.app Payload/
+          zip -qry ../../../ytmusic-mobile.ipa Payload && cd ../../..
+          VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" frontend/ios/App/Payload/App.app/Info.plist)
+          SIZE=$(stat -f%z ytmusic-mobile.ipa)
+          DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          ICON="https://raw.githubusercontent.com/${REPO}/main/frontend/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png"
+          cat > source.json <<JSON
+          {
+            "name": "YT Music Mobile",
+            "identifier": "io.github.thenickcoolst.ytmusicmobile",
+            "subtitle": "Eigene App-Quelle",
+            "iconURL": "${ICON}",
+            "website": "https://github.com/${REPO}",
+            "apps": [{
+              "name": "YT Music",
+              "bundleIdentifier": "com.thenickcoolst.ytmusicmobile",
+              "developerName": "TheNickCoolst",
+              "subtitle": "YouTube Music mit DJ-Modus",
+              "localizedDescription": "YouTube Music mit Empfehlungen, DJ-Modus, Songtexten und Hintergrund-Wiedergabe. Aktualisiert sich selbst.",
+              "iconURL": "${ICON}",
+              "tintColor": "#FF0033",
+              "category": "entertainment",
+              "versions": [{
+                "version": "${VERSION}",
+                "buildVersion": "${WEB_BUILD}",
+                "date": "${DATE}",
+                "localizedDescription": $(git log -1 --pretty=%s | jq -Rs .),
+                "downloadURL": "https://github.com/${REPO}/releases/download/ios-latest/ytmusic-mobile.ipa",
+                "size": ${SIZE},
+                "minOSVersion": "15.0"
+              }],
+              "appPermissions": { "entitlements": [], "privacy": {} }
+            }],
+            "news": []
+          }
+          JSON
+          jq . source.json > /dev/null
+          gh release view ios-latest >/dev/null 2>&1 || \
+            gh release create ios-latest --prerelease --title "iPhone-Version (neuester Stand)" \
+              --notes "Unsignierte iPhone-App. Installation über SideStore (Quelle: source.json) oder Sideloadly."
+          gh release upload ios-latest ytmusic-mobile.ipa source.json --clobber

@@ -13,6 +13,15 @@ const config: CapacitorConfig = {
   plugins: {
     // light status/navigation bar icons on the dark app background
     SystemBars: { style: 'DARK' },
+    // Self-updates from GitHub Releases (manual mode, no Capgo cloud, no telemetry)
+    CapacitorUpdater: {
+      autoUpdate: false,
+      statsUrl: '',
+      appReadyTimeout: 15000,
+      autoDeleteFailed: true,
+      autoDeletePrevious: true,
+      resetWhenUpdate: true,
+    },
   },
   android: {
     allowMixedContent: true,
