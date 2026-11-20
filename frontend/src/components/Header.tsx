@@ -29,7 +29,7 @@ export const Header: React.FC<HeaderProps> = ({
   return (
     <div className="sticky top-0 z-30 bg-[#030303]/95 backdrop-blur-xl border-b border-white/5 select-none">
       {/* Top Main Bar */}
-      <div className="flex items-center justify-between px-4 pt-3 pb-2">
+      <div className="flex items-center justify-between px-4 pt-[calc(var(--sat)+12px)] pb-2">
         {/* Brand: YouTube Music 1:1 Logo */}
         <div className="flex items-center space-x-1.5 cursor-pointer">
           <div className="w-6 h-6 rounded-full bg-red-600 flex items-center justify-center shadow-md shadow-red-600/40">

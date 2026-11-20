@@ -24,7 +24,7 @@ export const MiniPlayer: React.FC = () => {
   return (
     <div
       onClick={() => setIsPlayerExpanded(true)}
-      className="fixed bottom-[calc(56px+max(env(safe-area-inset-bottom),8px))] left-2 right-2 z-30 bg-[#212121]/95 backdrop-blur-xl border border-white/10 rounded-xl overflow-hidden shadow-2xl cursor-pointer select-none active:scale-[0.99] transition duration-150"
+      className="fixed bottom-[calc(56px+max(var(--sab),8px))] left-2 right-2 z-30 bg-[#212121]/95 backdrop-blur-xl border border-white/10 rounded-xl overflow-hidden shadow-2xl cursor-pointer select-none active:scale-[0.99] transition duration-150"
     >
       {/* Top progress bar */}
       <div className="w-full bg-white/10 h-0.5">

@@ -10,6 +10,10 @@ const config: CapacitorConfig = {
     androidScheme: 'http',
     cleartext: true,
   },
+  plugins: {
+    // light status/navigation bar icons on the dark app background
+    SystemBars: { style: 'DARK' },
+  },
   android: {
     allowMixedContent: true,
     backgroundColor: '#030303',

@@ -267,7 +267,7 @@ export const NowPlayingModal: React.FC = () => {
       {isCarMode && (
         <div className="fixed inset-0 z-[60] bg-[#070707] flex flex-col justify-between p-6 select-none animate-in fade-in duration-200">
           {/* Car Mode Header */}
-          <div className="flex items-center justify-between pt-[max(env(safe-area-inset-top),12px)]">
+          <div className="flex items-center justify-between pt-[max(var(--sat),12px)]">
             <div className="flex items-center space-x-2 text-red-500 font-black tracking-wider uppercase text-sm">
               <Car className="w-5 h-5" />
               <span>550 Fahrmodus</span>
@@ -355,7 +355,7 @@ export const NowPlayingModal: React.FC = () => {
       )}
 
       {/* Top Bar: 1:1 YouTube Music Player Header */}
-      <header className="relative z-10 flex items-center justify-between px-4 pt-[max(env(safe-area-inset-top),12px)] pb-1">
+      <header className="relative z-10 flex items-center justify-between px-4 pt-[max(var(--sat),12px)] pb-1">
         {/* Minimize Chevron */}
         <button
           onClick={() => setIsPlayerExpanded(false)}

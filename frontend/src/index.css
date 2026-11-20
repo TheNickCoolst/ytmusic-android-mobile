@@ -4,6 +4,9 @@
 
 :root {
   color-scheme: dark;
+  /* Capacitor 8 injects --safe-area-inset-* (edge-to-edge Android); env() covers browsers */
+  --sat: max(var(--safe-area-inset-top, 0px), env(safe-area-inset-top, 0px));
+  --sab: max(var(--safe-area-inset-bottom, 0px), env(safe-area-inset-bottom, 0px));
 }
 
 body {

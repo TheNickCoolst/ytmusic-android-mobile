@@ -185,8 +185,12 @@ public class GoogleAuthPlugin extends Plugin {
         settings.setJavaScriptCanOpenWindowsAutomatically(true);
         settings.setSupportMultipleWindows(false);
         settings.setCacheMode(WebSettings.LOAD_DEFAULT);
-        // Important: Set realistic Chrome user agent to prevent Google 403 disallowed_useragent
-        settings.setUserAgentString(USER_AGENT_CHROME_MOBILE);
+        // Google blocks sign-in for user agents marked as WebView ("; wv") -> use the real
+        // Chrome UA of this device without the WebView marker
+        String ua = settings.getUserAgentString();
+        if (ua == null || ua.isEmpty()) ua = USER_AGENT_CHROME_MOBILE;
+        ua = ua.replace("; wv)", ")").replace(" Version/4.0", "");
+        settings.setUserAgentString(ua);
 
         CookieManager cookieManager = CookieManager.getInstance();
         cookieManager.setAcceptCookie(true);
@@ -208,34 +212,27 @@ public class GoogleAuthPlugin extends Plugin {
         webView.setWebViewClient(
                 new WebViewClient() {
                     private boolean checkAndResolveAuth(String currentUrl) {
+                        if (currentUrl == null || activeCall == null) return false;
+                        String host = Uri.parse(currentUrl).getHost();
+                        // Only accept once Google redirected back to YouTube Music
+                        if (host == null || !host.equals("music.youtube.com")) return false;
+
                         CookieManager cm = CookieManager.getInstance();
-                        String ytmCookie = cm.getCookie("https://music.youtube.com");
-                        String ytCookie = cm.getCookie("https://www.youtube.com");
+                        String cookie = cm.getCookie("https://music.youtube.com");
+                        if (cookie == null) return false;
+                        boolean hasAuth = cookie.contains("SAPISID=") || cookie.contains("__Secure-3PAPISID=");
+                        if (!hasAuth) return false;
 
-                        String combined = "";
-                        if (ytmCookie != null) combined += ytmCookie + "; ";
-                        if (ytCookie != null) combined += ytCookie;
-
-                        // Check if Google credentials (SAPISID, __Secure-3PAPISID, SSID or HSID) are present
-                        boolean hasAuth = combined.contains("SAPISID=")
-                                || combined.contains("__Secure-3PAPISID=")
-                                || combined.contains("SSID=");
-
-                        if (hasAuth && (currentUrl.contains("music.youtube.com") || currentUrl.contains("youtube.com"))) {
-                            cm.flush();
-                            if (activeCall != null) {
-                                JSObject ret = new JSObject();
-                                ret.put("status", "success");
-                                ret.put("cookie", combined);
-                                activeCall.resolve(ret);
-                                activeCall = null;
-                            }
-                            if (loginDialog != null && loginDialog.isShowing()) {
-                                loginDialog.dismiss();
-                            }
-                            return true;
+                        cm.flush();
+                        JSObject ret = new JSObject();
+                        ret.put("status", "success");
+                        ret.put("cookie", cookie);
+                        activeCall.resolve(ret);
+                        activeCall = null;
+                        if (loginDialog != null && loginDialog.isShowing()) {
+                            loginDialog.dismiss();
                         }
-                        return false;
+                        return true;
                     }
 
                     @Override
@@ -253,10 +250,10 @@ public class GoogleAuthPlugin extends Plugin {
                     @Override
                     public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                         String url = request.getUrl().toString();
-                        if (checkAndResolveAuth(url)) {
-                            return true;
-                        }
-                        return false;
+                        String scheme = request.getUrl().getScheme();
+                        // intent:// etc. cannot be opened inside the login window
+                        if (scheme != null && !scheme.startsWith("http")) return true;
+                        return checkAndResolveAuth(url);
                     }
                 });
 

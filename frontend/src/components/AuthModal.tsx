@@ -47,6 +47,29 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   if (!isOpen) return null;
 
+  const isNative = googleAuthService.isNative();
+
+  // APK: Google login in an in-app window, cookie stays on the phone
+  const handleInAppLogin = async () => {
+    setGoogleLoading(true);
+    setError(null);
+    setInfoMsg(null);
+    try {
+      const cookie = await googleAuthService.signInInApp();
+      const res = await api.login(cookie);
+      onProfileUpdate(res.profile);
+      setInfoMsg(`Angemeldet als ${res.profile.name}`);
+      setTimeout(() => onClose(), 800);
+    } catch (err: any) {
+      const msg = String(err?.message || err || '');
+      if (!/abgebrochen/i.test(msg)) {
+        setError(msg || 'Anmeldung fehlgeschlagen. Bitte nochmal versuchen.');
+      }
+    } finally {
+      setGoogleLoading(false);
+    }
+  };
+
   // Opens the user's normal mobile browser directly (as requested)
   const handleOpenNormalBrowser = async () => {
     setGoogleLoading(true);
@@ -261,7 +284,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   Mit Google anmelden
                 </h2>
                 <p className="text-xs text-zinc-400">
-                  Über deinen normalen Handy-Browser (z.B. Chrome)
+                  {isNative ? 'Direkt in der App, ohne Mac-Server' : 'Über deinen normalen Browser'}
                 </p>
               </div>
             </div>
@@ -284,14 +307,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             <div className="space-y-3">
               <button
                 type="button"
-                onClick={handleOpenNormalBrowser}
+                onClick={isNative ? handleInAppLogin : handleOpenNormalBrowser}
                 disabled={googleLoading}
                 className="w-full py-3.5 px-4 rounded-xl bg-white hover:bg-zinc-100 text-zinc-900 font-semibold text-sm active:scale-98 transition flex items-center justify-center space-x-3 shadow-xl cursor-pointer"
               >
                 {googleLoading ? (
                   <>
                     <Loader2 className="w-5 h-5 animate-spin text-zinc-900" />
-                    <span>Browser wird geöffnet...</span>
+                    <span>{isNative ? 'Anmeldung läuft...' : 'Browser wird geöffnet...'}</span>
                   </>
                 ) : (
                   <>
@@ -314,13 +337,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                         d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
                       />
                     </svg>
-                    <span>Im normalen Handy-Browser öffnen</span>
-                    <ExternalLink className="w-4 h-4 text-zinc-500 ml-1" />
+                    <span>{isNative ? 'Mit Google anmelden' : 'Im normalen Browser öffnen'}</span>
+                    {!isNative && <ExternalLink className="w-4 h-4 text-zinc-500 ml-1" />}
                   </>
                 )}
               </button>
 
-              {/* STEP 2: PASTE & CONNECT FROM CLIPBOARD */}
+              {/* STEP 2: PASTE & CONNECT FROM CLIPBOARD (browser only; the APK logs in directly) */}
+              {!isNative && (<>
               <button
                 type="button"
                 onClick={handlePasteAndLogin}
@@ -372,6 +396,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   )}
                 </button>
               </div>
+              </>)}
+              {isNative && (
+                <p className="text-[11px] text-zinc-400 bg-white/5 p-3 rounded-xl border border-white/5">
+                  Es öffnet sich die Google-Anmeldung. Nach dem Login kommst du automatisch zurück – deine
+                  YouTube Music Playlists, Lieblingslieder und Likes werden direkt auf dem Handy geladen.
+                </p>
+              )}
             </div>
 
             {/* OPTION B: PLAYLIST IMPORT BY URL / LINK (NO LOGIN REQUIRED) */}

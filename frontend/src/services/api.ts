@@ -26,6 +26,25 @@ async function withFallback<T>(serverCall: (signal: AbortSignal) => Promise<T>, 
   }
 }
 
+const PROFILE_KEY = 'ytmusic_google_profile';
+const nativeAuth = () => yt.isNativeApp() && !!yt.getStoredCookie();
+const loadProfile = (): UserProfile | null => {
+  try {
+    const raw = localStorage.getItem(PROFILE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+};
+const saveProfile = (p: UserProfile | null) => {
+  try {
+    if (p) localStorage.setItem(PROFILE_KEY, JSON.stringify(p));
+    else localStorage.removeItem(PROFILE_KEY);
+  } catch {
+    /* ignore */
+  }
+};
+
 export interface UserProfile {
   isLoggedIn: boolean;
   name: string;
@@ -58,7 +77,25 @@ export const getApiBase = (): string => {
 
 export const api = {
   // Auth & Account
+  // In the APK the Google cookie lives on the phone and all account calls go directly to YouTube.
   async getAuthStatus(): Promise<UserProfile> {
+    if (yt.isNativeApp()) {
+      const cookie = yt.getStoredCookie();
+      if (!cookie) return { isLoggedIn: false, name: 'Gast' };
+      const cached = loadProfile();
+      if (cached) {
+        // refresh in background, keep cached profile on network errors
+        yt.getAccountInfo(cookie).then(saveProfile).catch(() => {});
+        return cached;
+      }
+      try {
+        const p = await yt.getAccountInfo(cookie);
+        saveProfile(p);
+        return p;
+      } catch {
+        return { isLoggedIn: false, name: 'Gast' };
+      }
+    }
     try {
       const res = await fetch(`${getApiBase()}/auth/status`, { signal: AbortSignal.timeout(3000) });
       if (!res.ok) return { isLoggedIn: false, name: 'Gast' };
@@ -69,6 +106,16 @@ export const api = {
   },
 
   async login(authData: string): Promise<{ status: string; profile: UserProfile }> {
+    if (yt.isNativeApp()) {
+      const cookie = yt.normalizeCookieInput(authData);
+      if (!yt.cookieHasAuth(cookie)) {
+        throw new Error('Keine gültige Google-Anmeldung gefunden (SAPISID fehlt). Bitte erneut anmelden.');
+      }
+      const profile = await yt.getAccountInfo(cookie);
+      yt.setStoredCookie(cookie);
+      saveProfile(profile);
+      return { status: 'success', profile };
+    }
     const res = await fetch(`${getApiBase()}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -82,10 +129,16 @@ export const api = {
   },
 
   async logout(): Promise<void> {
+    if (yt.isNativeApp()) {
+      yt.setStoredCookie(null);
+      saveProfile(null);
+      return;
+    }
     await fetch(`${getApiBase()}/auth/logout`, { method: 'POST' });
   },
 
   async getUserPlaylists(): Promise<{ id: string; title: string; trackCount?: number; thumbnail: string }[]> {
+    if (nativeAuth()) return yt.getLibraryPlaylists();
     const res = await fetch(`${getApiBase()}/auth/library/playlists`);
     if (!res.ok) throw new Error('Could not fetch playlists');
     const data = await res.json();
@@ -93,6 +146,7 @@ export const api = {
   },
 
   async getUserLikedSongs(): Promise<Track[]> {
+    if (nativeAuth()) return yt.getLikedSongs();
     const res = await fetch(`${getApiBase()}/auth/library/liked`);
     if (!res.ok) throw new Error('Could not fetch liked songs');
     const data = await res.json();
@@ -100,6 +154,7 @@ export const api = {
   },
 
   async getUserHistory(): Promise<Track[]> {
+    if (nativeAuth()) return yt.getHistory();
     const res = await fetch(`${getApiBase()}/auth/library/history`);
     if (!res.ok) throw new Error('Could not fetch history');
     const data = await res.json();
@@ -108,6 +163,8 @@ export const api = {
 
   async likeTrackOnYouTube(trackId: string): Promise<void> {
     try {
+      if (nativeAuth()) return await yt.rateSong(trackId, true);
+      if (yt.isNativeApp()) return;
       await fetch(`${getApiBase()}/auth/track/like`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -120,6 +177,8 @@ export const api = {
 
   async unlikeTrackOnYouTube(trackId: string): Promise<void> {
     try {
+      if (nativeAuth()) return await yt.rateSong(trackId, false);
+      if (yt.isNativeApp()) return;
       await fetch(`${getApiBase()}/auth/track/unlike`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -181,25 +240,43 @@ export const api = {
   },
 
   async getPlaylist(playlistId: string): Promise<any> {
-    const res = await fetch(`${getApiBase()}/playlist/${playlistId}`);
-    if (!res.ok) throw new Error('Playlist failed');
-    return await res.json();
+    // Logged in on the phone: load directly (private playlists need the phone's cookie)
+    if (nativeAuth()) return yt.getPlaylistDirect(playlistId);
+    return withFallback(
+      async (signal) => {
+        const res = await fetch(`${getApiBase()}/playlist/${playlistId}`, { signal });
+        if (!res.ok) throw new Error('Playlist failed');
+        return await res.json();
+      },
+      () => yt.getPlaylistDirect(playlistId)
+    );
   },
 
   async search(query: string, filter?: string): Promise<Track[]> {
+    // "Künstler" = songs by that artist (artist pages themselves are not playable)
+    const f = filter === 'artists' ? 'songs' : filter;
     const params = new URLSearchParams({ q: query });
-    if (filter && filter !== 'all') {
-      params.append('filter', filter);
+    if (f && f !== 'all') {
+      params.append('filter', f);
     }
-    return withFallback(
+    const results = await withFallback(
       async (signal) => {
         const res = await fetch(`${getApiBase()}/search?${params.toString()}`, { signal });
         if (!res.ok) throw new Error('Search failed');
         const data = await res.json();
-        return data.results || [];
+        return (data.results || []) as Track[];
       },
-      () => (filter === 'songs' ? yt.searchSongs(query) : yt.searchAll(query))
+      () => (f === 'songs' ? yt.searchSongs(query) : yt.searchAll(query))
     );
+    // Only playable entries with a real title (no artist/album/radio cards)
+    return results
+      .filter((t: any) => t && t.id && t.title && !['artist', 'album', 'playlist', 'podcast', 'episode'].includes(t.type))
+      .filter((t: any) => !/^radio\s*[•·]/i.test(t.title))
+      .map((t: any) => ({
+        ...t,
+        artist: t.artist && t.artist !== 'Unknown Artist' ? t.artist : 'Unbekannt',
+        duration: t.duration && t.duration !== '0:00' ? t.duration : undefined,
+      }));
   },
 
   async getCharts(country = 'DE'): Promise<Track[]> {

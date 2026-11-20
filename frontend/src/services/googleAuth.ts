@@ -26,6 +26,13 @@ export const googleAuthService = {
     }
   },
 
+  /** Google login inside an app window; returns the YouTube Music cookie (APK only). */
+  async signInInApp(): Promise<string> {
+    const res = await NativeGoogleAuth.signInEmbedded();
+    if (!res?.cookie) throw new Error('Keine Anmeldedaten erhalten');
+    return res.cookie;
+  },
+
   async signIn(): Promise<{ status: string; url?: string; cookie?: string }> {
     // Opens the user's normal mobile browser directly as requested
     await this.openSystemBrowser();

@@ -654,7 +654,8 @@ async def search_tracks(q: str = Query(..., min_length=1), filter: Optional[str]
         for r in results:
             result_type = r.get("resultType") or filter or "song"
             vid = r.get("videoId")
-            if not vid and result_type not in ["artist", "album"]:
+            # only playable songs/videos with a title
+            if not vid or not r.get("title") or result_type not in ["song", "video"]:
                 continue
 
             artists = [a.get("name") for a in r.get("artists", []) if a.get("name")]

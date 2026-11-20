@@ -136,8 +136,87 @@ export const getDirectAudioUrl = async (videoId: string): Promise<string> => {
   return pick.url;
 };
 
+// ---------- Google account (cookie stored on the phone) ----------
+const COOKIE_KEY = 'ytmusic_google_cookie';
+
+export const getStoredCookie = (): string | null => {
+  try {
+    return localStorage.getItem(COOKIE_KEY);
+  } catch {
+    return null;
+  }
+};
+
+export const setStoredCookie = (cookie: string | null) => {
+  try {
+    if (cookie) localStorage.setItem(COOKIE_KEY, cookie);
+    else localStorage.removeItem(COOKIE_KEY);
+  } catch {
+    /* ignore */
+  }
+};
+
+/** Normalise pasted input: raw cookie string, "Cookie: ..." line or full request headers. */
+export const normalizeCookieInput = (raw: string): string => {
+  const text = raw.trim();
+  const line = text.split(/\r?\n/).find((l) => /^cookie\s*:/i.test(l.trim()));
+  let cookie = line ? line.replace(/^\s*cookie\s*:\s*/i, '') : text.replace(/^cookie\s*:\s*/i, '');
+  cookie = cookie.replace(/\s*\r?\n\s*/g, ' ').trim();
+  return cookie;
+};
+
+const cookieValue = (cookie: string, name: string): string | null => {
+  const m = cookie.match(new RegExp(`(?:^|;\\s*)${name.replace(/[.$]/g, '\\$&')}=([^;]+)`));
+  return m ? m[1].trim() : null;
+};
+
+export const cookieHasAuth = (cookie: string): boolean =>
+  !!(cookieValue(cookie, 'SAPISID') || cookieValue(cookie, '__Secure-3PAPISID'));
+
+// Small synchronous SHA-1 (crypto.subtle is not available in every WebView context)
+const sha1Hex = (msg: string): string => {
+  const bytes = Array.from(new TextEncoder().encode(msg));
+  const bitLen = bytes.length * 8;
+  bytes.push(0x80);
+  while (bytes.length % 64 !== 56) bytes.push(0);
+  for (let i = 7; i >= 0; i--) bytes.push(i >= 4 ? 0 : (bitLen >>> (i * 8)) & 0xff);
+  let h0 = 0x67452301, h1 = 0xefcdab89, h2 = 0x98badcfe, h3 = 0x10325476, h4 = 0xc3d2e1f0;
+  const w = new Array<number>(80);
+  const rotl = (x: number, n: number) => (x << n) | (x >>> (32 - n));
+  for (let off = 0; off < bytes.length; off += 64) {
+    for (let i = 0; i < 16; i++) {
+      w[i] = (bytes[off + i * 4] << 24) | (bytes[off + i * 4 + 1] << 16) | (bytes[off + i * 4 + 2] << 8) | bytes[off + i * 4 + 3];
+    }
+    for (let i = 16; i < 80; i++) w[i] = rotl(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
+    let a = h0, b = h1, c = h2, d = h3, e = h4;
+    for (let i = 0; i < 80; i++) {
+      let f: number, k: number;
+      if (i < 20) { f = (b & c) | (~b & d); k = 0x5a827999; }
+      else if (i < 40) { f = b ^ c ^ d; k = 0x6ed9eba1; }
+      else if (i < 60) { f = (b & c) | (b & d) | (c & d); k = 0x8f1bbcdc; }
+      else { f = b ^ c ^ d; k = 0xca62c1d6; }
+      const t = (rotl(a, 5) + f + e + k + w[i]) | 0;
+      e = d; d = c; c = rotl(b, 30); b = a; a = t;
+    }
+    h0 = (h0 + a) | 0; h1 = (h1 + b) | 0; h2 = (h2 + c) | 0; h3 = (h3 + d) | 0; h4 = (h4 + e) | 0;
+  }
+  return [h0, h1, h2, h3, h4].map((x) => (x >>> 0).toString(16).padStart(8, '0')).join('');
+};
+
+const ORIGIN = 'https://music.youtube.com';
+
+const authHeaders = (cookie: string): Record<string, string> => {
+  const sapisid = cookieValue(cookie, '__Secure-3PAPISID') || cookieValue(cookie, 'SAPISID');
+  const h: Record<string, string> = { Cookie: cookie, 'X-Goog-AuthUser': '0', 'X-Origin': ORIGIN };
+  if (sapisid) {
+    const ts = Math.floor(Date.now() / 1000);
+    h.Authorization = `SAPISIDHASH ${ts}_${sha1Hex(`${ts} ${sapisid} ${ORIGIN}`)}`;
+  }
+  return h;
+};
+
 // ---------- YouTube Music (WEB_REMIX) ----------
-const musicRequest = async (endpoint: string, payload: Record<string, any>): Promise<any> => {
+const musicRequest = async (endpoint: string, payload: Record<string, any>, cookie?: string | null): Promise<any> => {
   const vd = await getVisitorData();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -148,6 +227,7 @@ const musicRequest = async (endpoint: string, payload: Record<string, any>): Pro
     'X-YouTube-Client-Version': MUSIC_CLIENT.clientVersion,
   };
   if (vd) headers['X-Goog-Visitor-Id'] = vd;
+  if (cookie) Object.assign(headers, authHeaders(cookie));
   const txt = await http(`https://music.youtube.com/youtubei/v1/${endpoint}?prettyPrint=false`, {
     method: 'POST',
     headers,
@@ -360,4 +440,91 @@ export const getNativeHomeShelves = async (): Promise<any[]> => {
     });
   }
   return shelves;
+};
+
+// ---------- account / library (needs Google cookie) ----------
+const requireCookie = (): string => {
+  const c = getStoredCookie();
+  if (!c) throw new Error('Nicht angemeldet');
+  return c;
+};
+
+export interface NativeProfile {
+  isLoggedIn: boolean;
+  name: string;
+  handle?: string | null;
+  avatar?: string | null;
+}
+
+export const getAccountInfo = async (cookie: string): Promise<NativeProfile> => {
+  const data = await musicRequest('account/account_menu', {}, cookie);
+  const hdr = collect(data, 'activeAccountHeaderRenderer')[0];
+  if (!hdr) throw new Error('Google-Anmeldung ungültig oder abgelaufen');
+  const thumbs: any[] = hdr?.accountPhoto?.thumbnails || [];
+  let avatar: string | null = thumbs.length ? thumbs[thumbs.length - 1].url : null;
+  if (avatar?.startsWith('//')) avatar = 'https:' + avatar;
+  return {
+    isLoggedIn: true,
+    name: runsText(hdr.accountName) || 'Google Benutzer',
+    handle: runsText(hdr.channelHandle) || null,
+    avatar,
+  };
+};
+
+const tracksFrom = (data: any): Track[] => {
+  const seen = new Set<string>();
+  return collect(data, 'musicResponsiveListItemRenderer')
+    .map(parseListItem)
+    .filter((t): t is Track => !!t && !seen.has(t.id) && !!seen.add(t.id));
+};
+
+export const getLibraryPlaylists = async (): Promise<{ id: string; title: string; trackCount?: number; thumbnail: string }[]> => {
+  const data = await musicRequest('browse', { browseId: 'FEmusic_liked_playlists' }, requireCookie());
+  const out: { id: string; title: string; trackCount?: number; thumbnail: string }[] = [];
+  for (const r of collect(data, 'musicTwoRowItemRenderer')) {
+    const browseId: string | undefined = r?.navigationEndpoint?.browseEndpoint?.browseId;
+    if (!browseId || !browseId.startsWith('VL')) continue;
+    const id = browseId.slice(2);
+    if (id === 'LM') continue; // liked songs have their own section
+    const sub = runsText(r.subtitle);
+    const count = sub.match(/(\d[\d.]*)\s*(Titel|Songs?|Tracks?|Lieder|Videos?)/i);
+    const thumbs: any[] = r?.thumbnailRenderer?.musicThumbnailRenderer?.thumbnail?.thumbnails || [];
+    out.push({
+      id,
+      title: runsText(r.title) || 'Playlist',
+      trackCount: count ? parseInt(count[1].replace(/\./g, ''), 10) : undefined,
+      thumbnail: thumbs.length ? thumbs[thumbs.length - 1].url : '',
+    });
+  }
+  return out;
+};
+
+export const getLikedSongs = async (): Promise<Track[]> =>
+  tracksFrom(await musicRequest('browse', { browseId: 'VLLM' }, requireCookie()));
+
+export const getHistory = async (): Promise<Track[]> =>
+  tracksFrom(await musicRequest('browse', { browseId: 'FEmusic_history' }, requireCookie())).slice(0, 40);
+
+export const rateSong = async (videoId: string, like: boolean): Promise<void> => {
+  await musicRequest(like ? 'like/like' : 'like/removelike', { target: { videoId } }, requireCookie());
+};
+
+export const getPlaylistDirect = async (playlistId: string): Promise<any> => {
+  const browseId = playlistId.startsWith('VL') ? playlistId : `VL${playlistId}`;
+  const data = await musicRequest('browse', { browseId }, getStoredCookie());
+  const tracks = tracksFrom(data);
+  const hdr =
+    collect(data, 'musicResponsiveHeaderRenderer')[0] ||
+    collect(data, 'musicDetailHeaderRenderer')[0] ||
+    collect(data, 'musicEditablePlaylistDetailHeaderRenderer')[0];
+  const title = runsText(hdr?.title) || runsText(collect(hdr, 'title')[0]) || 'Playlist';
+  const thumbs: any[] = collect(hdr, 'thumbnails')[0] || [];
+  return {
+    id: browseId.slice(2),
+    title,
+    description: runsText(collect(hdr, 'description')[0]?.musicDescriptionShelfRenderer?.description) || null,
+    thumbnail: thumbs.length ? thumbs[thumbs.length - 1].url : tracks[0]?.thumbnail || '',
+    trackCount: tracks.length,
+    tracks,
+  };
 };
