@@ -301,6 +301,18 @@ export const fetchBytes = async (url: string): Promise<Uint8Array> => {
   return new Uint8Array(await r.arrayBuffer());
 };
 
+/** Mobile networks drop single requests now and then (connection reset/abort, DNS hiccup). */
+const fetchRetry = async (url: string, tries = 3): Promise<Uint8Array> => {
+  for (let n = 1; ; n++) {
+    try {
+      return await fetchBytes(url);
+    } catch (e) {
+      if (n >= tries) throw e;
+      await new Promise((r) => setTimeout(r, 700 * n));
+    }
+  }
+};
+
 /** Download the full audio file. YouTube URLs are fetched as parallel range chunks (fast, not throttled). */
 export const downloadAudio = async (id: string, skipOffline = false): Promise<{ bytes: Uint8Array; mime: string }> => {
   if (!skipOffline) {
@@ -322,7 +334,7 @@ export const downloadAudio = async (id: string, skipOffline = false): Promise<{ 
         while (next < ranges.length) {
           const i = next++;
           const [s, e] = ranges[i];
-          parts[i] = await fetchBytes(`${url}&range=${s}-${e}`);
+          parts[i] = await fetchRetry(`${url}&range=${s}-${e}`);
         }
       };
       await Promise.all([worker(), worker(), worker(), worker()]);
@@ -334,7 +346,7 @@ export const downloadAudio = async (id: string, skipOffline = false): Promise<{ 
       }
       return { bytes: out, mime };
     }
-    return { bytes: await fetchBytes(url), mime };
+    return { bytes: await fetchRetry(url), mime };
   }
   return { bytes: await fetchBytes(api.getStreamUrl(id)), mime: 'audio/mp4' };
 };

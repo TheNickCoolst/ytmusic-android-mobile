@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useSyncExternalStore } from 'react';
 import { Track, Playlist, RepeatMode, EqualizerPreset } from '../types';
 import { api, isServerMarkedDown } from '../services/api';
-import { isNativeApp, reportPlayback } from '../services/youtube';
+import { isNativeApp, reportPlayback, forgetAudioUrl } from '../services/youtube';
 import { prepareTrack, planMix, MixPlan, TrackAnalysis } from '../services/dj';
 import { mediaControls } from '../services/mediaControls';
 
@@ -163,6 +163,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   });
   const [djStatus, setDjStatus] = useState<DjStatus>({ phase: 'off' });
   const [djEpoch, setDjEpoch] = useState(0);
+  const djRetryRef = useRef<{ key: string; n: number }>({ key: '', n: 0 });
 
   // Library state
   const [likedTracks, setLikedTracks] = useState<Track[]>(() => {
@@ -694,10 +695,13 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       return;
     }
 
-    if (queueIndex < queue.length - 1) {
-      const nextIndex = shuffle ? Math.floor(Math.random() * queue.length) : queueIndex + 1;
-      setQueueIndex(nextIndex);
-      playTrack(queue[nextIndex], queue);
+    const shuffleIdx = shuffle ? shuffleNextIndex(repeatMode === 'all') : -1;
+    if (shuffleIdx >= 0) {
+      setQueueIndex(shuffleIdx);
+      playTrack(queue[shuffleIdx], queue);
+    } else if (!shuffle && queueIndex < queue.length - 1) {
+      setQueueIndex(queueIndex + 1);
+      playTrack(queue[queueIndex + 1], queue);
     } else if (repeatMode === 'all' && queue.length > 0) {
       setQueueIndex(0);
       playTrack(queue[0], queue);
@@ -1021,17 +1025,34 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (!on) abortDj();
   };
 
-  // Which track comes next for the DJ (shuffle: one random pick per current track)
-  const djShuffleRef = useRef<{ forId: string; idx: number } | null>(null);
+  // Shuffle: one random pick per current track, shared by skip, song end, DJ and prefetch.
+  // Never the current song, and no repeats until every song in the queue has played.
+  const shufflePlayedRef = useRef<Set<string>>(new Set());
+  const shuffleNextRef = useRef<{ forId: string; idx: number } | null>(null);
+  const shuffleNextIndex = (cycle: boolean): number => {
+    if (!currentTrack || queue.length < 2) return -1;
+    const c = shuffleNextRef.current;
+    if (c && c.forId === currentTrack.id && c.idx !== queueIndex && queue[c.idx]) return c.idx;
+    const played = shufflePlayedRef.current;
+    played.add(currentTrack.id);
+    const others = queue.map((_, i) => i).filter((i) => i !== queueIndex && queue[i].id !== currentTrack.id);
+    let pool = others.filter((i) => !played.has(queue[i].id));
+    if (!pool.length && cycle) {
+      played.clear();
+      played.add(currentTrack.id);
+      pool = others;
+    }
+    if (!pool.length) return -1;
+    const idx = pool[Math.floor(Math.random() * pool.length)];
+    shuffleNextRef.current = { forId: currentTrack.id, idx };
+    return idx;
+  };
+
+  // Which track comes next for the DJ
   let djNextIndex = -1;
   if (djMode && currentTrack && queue.length > 1 && queueIndex >= 0 && repeatMode !== 'one') {
     if (shuffle) {
-      if (djShuffleRef.current?.forId !== currentTrack.id || !queue[djShuffleRef.current.idx]) {
-        let idx = Math.floor(Math.random() * queue.length);
-        if (idx === queueIndex) idx = (idx + 1) % queue.length;
-        djShuffleRef.current = { forId: currentTrack.id, idx };
-      }
-      djNextIndex = djShuffleRef.current.idx;
+      djNextIndex = shuffleNextIndex(repeatMode === 'all');
     } else if (queueIndex + 1 < queue.length) {
       djNextIndex = queueIndex + 1;
     } else if (repeatMode === 'all') {
@@ -1087,6 +1108,18 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         });
       } catch (e) {
         if (token !== djTokenRef.current) return;
+        // network hiccups are common on mobile: try again a few times before giving up on the mix
+        const key = `${cur.id}>${nextTrack.id}`;
+        const n = djRetryRef.current.key === key ? djRetryRef.current.n + 1 : 1;
+        djRetryRef.current = { key, n };
+        if (n <= 3) {
+          console.info(`DJ prepare failed (try ${n}/3), retrying`, e);
+          forgetAudioUrl(cur.id);
+          forgetAudioUrl(nextTrack.id);
+          setDjStatus({ phase: 'analyzing', message: 'Verbindung schwach – neuer Versuch…', nextTitle: nextTrack.title });
+          setTimeout(() => token === djTokenRef.current && setDjEpoch((x) => x + 1), 3000 * n);
+          return;
+        }
         console.warn('DJ prepare failed', e);
         setDjStatus({ phase: 'error', message: 'Analyse fehlgeschlagen – normaler Übergang', nextTitle: nextTrack.title });
       }
@@ -1129,7 +1162,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [currentTrack?.id, atQueueEnd, autoPlayRadio, repeatMode]);
 
   // Prefetch next track on the server so skipping / auto-advance starts instantly
-  const nextPrefetchId = queue[queueIndex + 1]?.id;
+  const nextPrefetchId = shuffle ? queue[shuffleNextIndex(repeatMode === 'all')]?.id : queue[queueIndex + 1]?.id;
   useEffect(() => {
     if (!nextPrefetchId || djMode) return;
     const t = setTimeout(() => {
@@ -1190,8 +1223,9 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       if (P && P.forId === currentTrackIdRef.current && startTransition(P, true)) return;
     }
     let nextIdx = queueIndex + 1;
-    if (shuffle) {
-      nextIdx = Math.floor(Math.random() * queue.length);
+    if (shuffle && queue.length > 1) {
+      nextIdx = shuffleNextIndex(true);
+      if (nextIdx < 0) return;
     } else if (nextIdx >= queue.length) {
       if (repeatMode === 'all') {
         nextIdx = 0;
@@ -1284,7 +1318,11 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   };
 
-  const toggleShuffle = () => setShuffle((prev) => !prev);
+  const toggleShuffle = () => {
+    shufflePlayedRef.current.clear();
+    shuffleNextRef.current = null;
+    setShuffle((prev) => !prev);
+  };
 
   const cycleRepeatMode = () => {
     setRepeatMode((prev) => {
