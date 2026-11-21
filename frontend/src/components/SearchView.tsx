@@ -3,13 +3,17 @@ import { Search, X, Loader2, History, RefreshCw } from 'lucide-react';
 import { Track } from '../types';
 import { api } from '../services/api';
 import { TrackItem } from './TrackItem';
+import { usePlayer } from '../context/PlayerContext';
 
-export const SearchView: React.FC = () => {
-  const [query, setQuery] = useState('');
+export const SearchView: React.FC<{ initialQuery?: string }> = ({ initialQuery }) => {
+  const [query, setQuery] = useState(initialQuery || '');
   const [filter, setFilter] = useState<'all' | 'songs' | 'videos' | 'artists'>('all');
   const [results, setResults] = useState<Track[]>([]);
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [correction, setCorrection] = useState<string | null>(null);
+  const suggestTokenRef = useRef(0);
   const searchTokenRef = useRef(0);
   const SUGGESTIONS = ['Ayliva', 'The Weeknd', 'Luciano', 'Apache 207', 'Billie Eilish'];
   const [recentSearches, setRecentSearches] = useState<string[]>(() => {
@@ -29,6 +33,16 @@ export const SearchView: React.FC = () => {
   };
 
   const debounceTimeout = useRef<NodeJS.Timeout | null>(null);
+  const { playTrack } = usePlayer();
+  // opened with a shared YouTube link: play it right away
+  const autoPlayLinkRef = useRef(!!initialQuery && /youtu\.?be|youtube\.com/i.test(initialQuery));
+  useEffect(() => {
+    if (initialQuery) {
+      setFilter('songs');
+      performSearch(initialQuery, 'songs');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const performSearch = async (searchQuery: string, searchFilter: string) => {
     if (!searchQuery.trim()) {
@@ -39,11 +53,33 @@ export const SearchView: React.FC = () => {
     const token = ++searchTokenRef.current;
     setLoading(true);
     setFailed(false);
+    setSuggestions([]);
+    setCorrection(null);
     try {
+      // pasted YouTube / YouTube Music link -> that song (+ its radio)
+      const vid = searchQuery.match(/(?:[?&]v=|youtu\.be\/|\/shorts\/|\/embed\/)([\w-]{11})/)?.[1];
+      if (vid) {
+        const radio = await api.getRadio(vid);
+        if (token !== searchTokenRef.current) return;
+        const seed = radio.find((t) => t.id === vid) || {
+          id: vid,
+          title: 'YouTube-Link',
+          artist: 'YouTube',
+          thumbnail: `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`,
+        };
+        const list = [seed, ...radio.filter((t) => t.id !== vid)];
+        setResults(list);
+        if (autoPlayLinkRef.current) {
+          autoPlayLinkRef.current = false;
+          playTrack(seed, list);
+        }
+        return;
+      }
       const data = await api.search(searchQuery, searchFilter);
       // an older, slower search must not overwrite the results of the newest one
       if (token !== searchTokenRef.current) return;
       setResults(data);
+      setCorrection(api.correctionFor(searchQuery));
 
       // Save to recent searches
       setRecentSearches((prev) => {
@@ -69,9 +105,11 @@ export const SearchView: React.FC = () => {
     if (debounceTimeout.current) clearTimeout(debounceTimeout.current);
 
     if (val.trim().length > 1) {
+      const st = ++suggestTokenRef.current;
+      api.getSearchSuggestions(val).then((s) => st === suggestTokenRef.current && setSuggestions(s));
       debounceTimeout.current = setTimeout(() => {
         performSearch(val, filter);
-      }, 400);
+      }, 700);
     } else {
       searchTokenRef.current++;
       setResults([]);
@@ -158,6 +196,41 @@ export const SearchView: React.FC = () => {
           })}
         </div>
       </div>
+
+      {/* Suggestions while typing */}
+      {suggestions.length > 0 && query.trim().length > 1 && (
+        <div className="flex flex-wrap gap-2">
+          {suggestions.map((sg) => (
+            <button
+              key={sg}
+              onClick={() => {
+                if (debounceTimeout.current) clearTimeout(debounceTimeout.current);
+                setQuery(sg);
+                performSearch(sg, filter);
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/5 border border-white/10 text-xs text-zinc-200 active:scale-95"
+            >
+              <Search className="w-3 h-3 text-zinc-500" /> {sg}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {!loading && correction && (
+        <div className="text-xs text-zinc-400">
+          Meintest du{' '}
+          <button
+            className="text-red-400 font-semibold underline"
+            onClick={() => {
+              setQuery(correction);
+              performSearch(correction, filter);
+            }}
+          >
+            {correction}
+          </button>
+          ?
+        </div>
+      )}
 
       {/* Loading state */}
       {loading && (

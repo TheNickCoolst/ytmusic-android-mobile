@@ -217,11 +217,29 @@ public class MediaPlaybackService extends Service {
         stopSelf();
     }
 
+    // headphones unplugged / Bluetooth disconnected -> pause instead of playing out loud
+    private final android.content.BroadcastReceiver noisyReceiver = new android.content.BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (android.media.AudioManager.ACTION_AUDIO_BECOMING_NOISY.equals(intent.getAction())) emit("pause", -1);
+        }
+    };
+    private boolean noisyRegistered = false;
+
     @Override
     public void onCreate() {
         super.onCreate();
         instance = this;
         ensureChannel(this);
+        try {
+            androidx.core.content.ContextCompat.registerReceiver(
+                this,
+                noisyReceiver,
+                new android.content.IntentFilter(android.media.AudioManager.ACTION_AUDIO_BECOMING_NOISY),
+                androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED);
+            noisyRegistered = true;
+        } catch (Exception ignored) {
+        }
     }
 
     @Override
@@ -240,6 +258,13 @@ public class MediaPlaybackService extends Service {
 
     @Override
     public void onDestroy() {
+        if (noisyRegistered) {
+            try {
+                unregisterReceiver(noisyReceiver);
+            } catch (Exception ignored) {
+            }
+            noisyRegistered = false;
+        }
         if (instance == this) instance = null;
         super.onDestroy();
     }

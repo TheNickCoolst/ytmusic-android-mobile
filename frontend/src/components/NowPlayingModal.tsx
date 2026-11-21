@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   ChevronDown,
+  ChevronUp,
+  ListPlus,
   Play,
   Pause,
   SkipBack,
@@ -35,7 +37,8 @@ import {
 import { usePlayer, usePlaybackTime } from '../context/PlayerContext';
 import { api } from '../services/api';
 import { EqualizerPreset } from '../types';
-import { tap } from '../services/ui';
+import { tap, toast } from '../services/ui';
+import { useSettings } from '../services/settings';
 
 interface LyricLine {
   time: number;
@@ -80,6 +83,9 @@ export const NowPlayingModal: React.FC = () => {
     queue,
     queueIndex,
     removeFromQueue,
+    moveInQueue,
+    insertIntoQueue,
+    createPlaylistWith,
     autoPlayRadio,
     setAutoPlayRadio,
     isPlayerExpanded,
@@ -122,6 +128,8 @@ export const NowPlayingModal: React.FC = () => {
   const [loadingLyrics, setLoadingLyrics] = useState(false);
   const [showSleepMenu, setShowSleepMenu] = useState(false);
   const lastCoverTapRef = useRef(0);
+  const coverTouchRef = useRef<{ x: number; y: number } | null>(null);
+  const { seekStep } = useSettings();
   const [heartPop, setHeartPop] = useState(0);
   useEffect(() => {
     if (!heartPop) return;
@@ -193,6 +201,25 @@ export const NowPlayingModal: React.FC = () => {
   }, [activeLyricIndex, activeTab, isSynced]);
 
   if (!isPlayerExpanded || !currentTrack) return null;
+
+  // cover gestures: swipe left/right = next/previous song, swipe down = close the player
+  const onCoverTouchStart = (e: React.TouchEvent) => {
+    coverTouchRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  };
+  const onCoverTouchEnd = (e: React.TouchEvent) => {
+    const s0 = coverTouchRef.current;
+    coverTouchRef.current = null;
+    if (!s0) return;
+    const dx = e.changedTouches[0].clientX - s0.x;
+    const dy = e.changedTouches[0].clientY - s0.y;
+    if (Math.abs(dx) > 70 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      tap();
+      if (dx < 0) nextTrack();
+      else previousTrack();
+    } else if (dy > 90 && dy > Math.abs(dx) * 1.5) {
+      setIsPlayerExpanded(false);
+    }
+  };
 
   // double tap on the cover = like (with a heart pop)
   const onCoverTap = () => {
@@ -508,6 +535,8 @@ export const NowPlayingModal: React.FC = () => {
             <div className="w-full h-full relative flex flex-col justify-center">
               <div
                 onClick={onCoverTap}
+                onTouchStart={onCoverTouchStart}
+                onTouchEnd={onCoverTouchEnd}
                 className="relative w-full h-full rounded-2xl overflow-hidden shadow-2xl shadow-black/90 bg-zinc-900 border border-white/10"
               >
                 {heartPop > 0 && (
@@ -648,8 +677,24 @@ export const NowPlayingModal: React.FC = () => {
             />
           </div>
 
-          <div className="flex justify-between text-xs font-mono text-zinc-400 mt-1">
+          <div className="flex justify-between items-center text-xs font-mono text-zinc-400 mt-1">
             <span>{formatTime(currentDisplayTime)}</span>
+            <div className="flex items-center gap-2 font-sans">
+              <button
+                aria-label={`${seekStep} Sekunden zurück`}
+                onClick={() => seek(Math.max(0, currentTime - seekStep))}
+                className="px-2 py-0.5 rounded-full bg-white/5 text-[11px] text-zinc-300 active:scale-95"
+              >
+                −{seekStep}s
+              </button>
+              <button
+                aria-label={`${seekStep} Sekunden vor`}
+                onClick={() => seek(Math.min(Math.max(0, duration - 1), currentTime + seekStep))}
+                className="px-2 py-0.5 rounded-full bg-white/5 text-[11px] text-zinc-300 active:scale-95"
+              >
+                +{seekStep}s
+              </button>
+            </div>
             <span>{formatTime(duration)}</span>
           </div>
         </div>
@@ -806,6 +851,17 @@ export const NowPlayingModal: React.FC = () => {
                   </button>
                 </div>
 
+                <button
+                  onClick={() => {
+                    const name = `Warteschlange ${new Date().toLocaleDateString('de-DE')}`;
+                    createPlaylistWith(name, queue);
+                    toast(`Als Playlist „${name}“ gespeichert`);
+                  }}
+                  className="w-full flex items-center justify-center gap-1.5 px-2 py-1.5 mb-2 text-xs text-zinc-300 bg-white/5 rounded-lg active:scale-95"
+                >
+                  <ListPlus className="w-4 h-4" /> Warteschlange als Playlist speichern
+                </button>
+
                 {/* Queue list */}
                 {queue.map((track, i) => {
                   const isTrackCurrent = i === queueIndex;
@@ -833,17 +889,36 @@ export const NowPlayingModal: React.FC = () => {
                         </div>
                       </div>
 
-                      {i !== queueIndex && (
+                      <div className="flex items-center flex-shrink-0" onClick={(e) => e.stopPropagation()}>
                         <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            removeFromQueue(i);
-                          }}
-                          className="p-1.5 text-zinc-500 hover:text-red-400 transition"
+                          aria-label="Nach oben"
+                          disabled={i === 0}
+                          onClick={() => moveInQueue(i, i - 1)}
+                          className="p-1.5 text-zinc-500 disabled:opacity-20"
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
+                          <ChevronUp className="w-3.5 h-3.5" />
                         </button>
-                      )}
+                        <button
+                          aria-label="Nach unten"
+                          disabled={i === queue.length - 1}
+                          onClick={() => moveInQueue(i, i + 1)}
+                          className="p-1.5 text-zinc-500 disabled:opacity-20"
+                        >
+                          <ChevronDown className="w-3.5 h-3.5" />
+                        </button>
+                        {i !== queueIndex && (
+                          <button
+                            aria-label="Aus Warteschlange entfernen"
+                            onClick={() => {
+                              removeFromQueue(i);
+                              toast('Entfernt', 'info', { label: 'Rückgängig', run: () => insertIntoQueue(i, track) });
+                            }}
+                            className="p-1.5 text-zinc-500 hover:text-red-400 transition"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
                     </div>
                   );
                 })}

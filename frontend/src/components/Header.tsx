@@ -1,11 +1,12 @@
 import React from 'react';
-import { User, Search, Cast, CheckCircle2 } from 'lucide-react';
+import { User, Search, Settings, CheckCircle2 } from 'lucide-react';
 import { UserProfile } from '../services/api';
 
 interface HeaderProps {
   userProfile: UserProfile;
   onOpenAuth: () => void;
   onOpenSearch: () => void;
+  onOpenSettings: () => void;
   activeFilter: string | null;
   onSelectFilter: (filter: string) => void;
   chips?: string[] | null;
@@ -15,6 +16,7 @@ export const Header: React.FC<HeaderProps> = ({
   userProfile,
   onOpenAuth,
   onOpenSearch,
+  onOpenSettings,
   activeFilter,
   onSelectFilter,
   chips: liveChips,
@@ -52,15 +54,17 @@ export const Header: React.FC<HeaderProps> = ({
           {/* Cast button */}
           <button
             className="p-1.5 text-zinc-300 hover:text-white active:scale-90 transition"
-            title="Auf Gerät übertragen"
-            onClick={() => alert('Chromecast / Audio-Ausgabe ist im Android-System aktiv.')}
+            title="Einstellungen"
+            aria-label="Einstellungen"
+            onClick={onOpenSettings}
           >
-            <Cast className="w-5 h-5" />
+            <Settings className="w-5 h-5" />
           </button>
 
           {/* Search magnifying glass */}
           <button
             onClick={onOpenSearch}
+            aria-label="Suchen"
             className="p-1.5 text-zinc-300 hover:text-white active:scale-90 transition"
             title="Suchen"
           >

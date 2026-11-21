@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Play, MoreVertical, Heart, Download, Check, ListPlus, Radio, Loader2, FolderPlus, X, ListStart, Share2, Trash2, ThumbsDown, Plus } from 'lucide-react';
+import React, { useState, useRef } from 'react';
+import { Play, MoreVertical, Heart, Download, Check, ListPlus, Radio, Loader2, FolderPlus, X, ListStart, Share2, Trash2, ThumbsDown, Plus, User } from 'lucide-react';
 import { toast, tap, shareTrack } from '../services/ui';
 import { Track } from '../types';
 import { usePlayer } from '../context/PlayerContext';
@@ -30,26 +30,75 @@ export const TrackItem: React.FC<TrackItemProps> = ({ track, index, playlistCont
   const [showMenu, setShowMenu] = useState(false);
   const [showPlaylistPicker, setShowPlaylistPicker] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [progress, setProgress] = useState(0);
   const [downloaded, setDownloaded] = useState(track.isCached || api.isDownloaded(track.id));
+
+  // long press = menu, swipe right = add to queue
+  const pressRef = useRef<{ x: number; y: number; timer?: ReturnType<typeof setTimeout>; fired: boolean } | null>(null);
+  const suppressClickRef = useRef(false);
+  const [dragX, setDragX] = useState(0);
+  const onTouchStart = (e: React.TouchEvent) => {
+    const t = e.touches[0];
+    const p = { x: t.clientX, y: t.clientY, fired: false } as NonNullable<typeof pressRef.current>;
+    p.timer = setTimeout(() => {
+      p.fired = true;
+      suppressClickRef.current = true;
+      tap(15);
+      setShowMenu(true);
+    }, 500);
+    pressRef.current = p;
+  };
+  const onTouchMove = (e: React.TouchEvent) => {
+    const p = pressRef.current;
+    if (!p) return;
+    const dx = e.touches[0].clientX - p.x;
+    const dy = e.touches[0].clientY - p.y;
+    if (Math.abs(dx) > 8 || Math.abs(dy) > 8) clearTimeout(p.timer);
+    if (dx > 0 && Math.abs(dx) > Math.abs(dy) * 1.5) setDragX(Math.min(110, dx));
+  };
+  const onTouchEnd = (e: React.TouchEvent) => {
+    const p = pressRef.current;
+    pressRef.current = null;
+    setDragX(0);
+    if (!p) return;
+    clearTimeout(p.timer);
+    const dx = e.changedTouches[0].clientX - p.x;
+    const dy = e.changedTouches[0].clientY - p.y;
+    if (!p.fired && dx > 90 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      suppressClickRef.current = true;
+      tap();
+      addToQueue(track);
+      toast('Zur Warteschlange hinzugefügt');
+    }
+  };
 
   const isCurrent = currentTrack?.id === track.id;
   const liked = isLiked(track.id);
 
   const handlePlay = () => {
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false;
+      return;
+    }
     playTrack(track, playlistContext);
   };
 
   const handleDownload = async (e: React.MouseEvent) => {
     e.stopPropagation();
     setIsDownloading(true);
+    setProgress(0);
     setShowMenu(false);
     try {
-      await api.downloadTrack(track.id, {
-        title: track.title,
-        artist: track.artist,
-        thumbnail: track.thumbnail,
-        duration: track.duration
-      });
+      await api.downloadTrack(
+        track.id,
+        {
+          title: track.title,
+          artist: track.artist,
+          thumbnail: track.thumbnail,
+          duration: track.duration,
+        },
+        setProgress
+      );
       setDownloaded(true);
       toast('Offline gespeichert');
     } catch (err) {
@@ -63,6 +112,14 @@ export const TrackItem: React.FC<TrackItemProps> = ({ track, index, playlistCont
   return (
     <div
       onClick={handlePlay}
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        setShowMenu(true);
+      }}
+      style={dragX ? { transform: `translateX(${dragX}px)`, background: `rgba(220,38,38,${dragX / 400})` } : undefined}
       className={`group flex items-center justify-between p-2 rounded-xl transition cursor-pointer select-none ${
         isCurrent ? 'bg-white/10' : 'hover:bg-white/5 active:bg-white/10'
       }`}
@@ -109,6 +166,11 @@ export const TrackItem: React.FC<TrackItemProps> = ({ track, index, playlistCont
                 <span>•</span>
                 <span>{track.duration}</span>
               </>
+            )}
+            {isDownloading && (
+              <span className="inline-flex items-center text-[10px] text-red-300 bg-red-500/10 px-1 rounded">
+                <Loader2 className="w-3 h-3 mr-0.5 animate-spin" /> {Math.round(progress * 100)} %
+              </span>
             )}
             {downloaded && (
               <span className="inline-flex items-center text-[10px] text-emerald-400 bg-emerald-500/10 px-1 py-0.2 rounded">
@@ -229,6 +291,19 @@ export const TrackItem: React.FC<TrackItemProps> = ({ track, index, playlistCont
                 <Radio className="w-4 h-4 text-zinc-400" />
                 <span>Song-Radio starten</span>
               </button>
+
+              {track.artist && track.artist !== 'Unbekannt' && (
+                <button
+                  onClick={() => {
+                    setShowMenu(false);
+                    window.dispatchEvent(new CustomEvent('ytm:search', { detail: track.artist.split(/,| & | feat\.? /i)[0].trim() }));
+                  }}
+                  className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-white/10 flex items-center space-x-2.5"
+                >
+                  <User className="w-4 h-4 text-zinc-400" />
+                  <span className="truncate">Mehr von {track.artist.split(/,| & | feat\.? /i)[0].trim()}</span>
+                </button>
+              )}
 
               <button
                 onClick={() => {

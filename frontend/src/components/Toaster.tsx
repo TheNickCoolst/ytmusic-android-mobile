@@ -1,5 +1,5 @@
 import React from 'react';
-import { useToasts } from '../services/ui';
+import { useToasts, dismissToast } from '../services/ui';
 
 /** Short confirmations ("Zur Warteschlange hinzugefügt") above the mini player. */
 export const Toaster: React.FC = () => {
@@ -10,11 +10,23 @@ export const Toaster: React.FC = () => {
       {list.map((t) => (
         <div
           key={t.id}
-          className={`max-w-full rounded-full px-4 py-2 text-xs font-semibold shadow-lg animate-in fade-in ${
+          role="status"
+          className={`max-w-full rounded-full px-4 py-2 text-xs font-semibold shadow-lg animate-in fade-in flex items-center gap-3 ${
             t.kind === 'error' ? 'bg-red-600 text-white' : 'bg-white text-black'
           }`}
         >
-          {t.text}
+          <span>{t.text}</span>
+          {t.action && (
+            <button
+              className="pointer-events-auto font-bold text-red-600 uppercase tracking-wide"
+              onClick={() => {
+                t.action!.run();
+                dismissToast(t.id);
+              }}
+            >
+              {t.action.label}
+            </button>
+          )}
         </div>
       ))}
     </div>

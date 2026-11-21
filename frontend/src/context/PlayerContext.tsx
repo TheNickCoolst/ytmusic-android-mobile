@@ -1,7 +1,9 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useSyncExternalStore } from 'react';
 import { Track, Playlist, RepeatMode, EqualizerPreset } from '../types';
 import { api, isServerMarkedDown } from '../services/api';
-import { isNativeApp, reportPlayback, forgetAudioUrl } from '../services/youtube';
+import { isNativeApp, reportPlayback, forgetAudioUrl, loudnessGain } from '../services/youtube';
+import { getSettings } from '../services/settings';
+import { logPlay } from '../services/stats';
 import { prepareTrack, planMix, MixPlan, TrackAnalysis } from '../services/dj';
 import { mediaControls } from '../services/mediaControls';
 
@@ -29,6 +31,8 @@ const loadJson = <T,>(k: string, fallback: T): T => {
 };
 const SETTINGS_KEY = 'ytmusic_player_settings';
 const SESSION_KEY = 'ytmusic_last_session';
+const LONG_POS_KEY = 'ytmusic_long_positions'; // podcasts / mixes / audiobooks: position per song
+const LONG_TRACK_S = 15 * 60;
 type SavedSettings = { shuffle?: boolean; repeatMode?: RepeatMode; autoPlayRadio?: boolean; volume?: number };
 type SavedSession = { track: Track; queue: Track[]; index: number; pos: number };
 
@@ -104,6 +108,13 @@ interface PlayerContextType {
   addToPlaylist: (playlistId: string, track: Track) => void;
   removeFromPlaylist: (playlistId: string, trackId: string) => void;
   deletePlaylist: (playlistId: string) => void;
+  renamePlaylist: (playlistId: string, name: string) => void;
+  movePlaylistTrack: (playlistId: string, from: number, to: number) => void;
+  createPlaylistWith: (name: string, tracks: Track[]) => string;
+  moveInQueue: (from: number, to: number) => void;
+  insertIntoQueue: (index: number, track: Track) => void;
+  removeFromHistory: (trackId: string) => void;
+  clearHistory: () => void;
 
   // Sleep timer
   setSleepTimer: (minutes: number | null) => void;
@@ -284,6 +295,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const djTickRef = useRef<() => void>(() => {});
   const glideRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const volumeRef = useRef(volume);
+  const gainRef = useRef(1); // loudness normalization of the current song
   const mutedRef = useRef(false);
   const playbackRateRef = useRef(1);
   // learned start latency of play() on this device (s), separately for app visible / in background
@@ -557,6 +569,15 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (!currentTrack) return;
     const a = audioRef.current;
     const pos = a && a.getAttribute('src') ? a.currentTime : resumePosRef.current?.pos || 0;
+    const dur = (a && isFinite(a.duration) && a.duration) || 0;
+    if (dur >= LONG_TRACK_S) {
+      const m = loadJson<Record<string, number>>(LONG_POS_KEY, {});
+      if (pos > 30 && pos < dur - 30) m[currentTrack.id] = Math.floor(pos);
+      else delete m[currentTrack.id];
+      const keys = Object.keys(m);
+      if (keys.length > 50) delete m[keys[0]];
+      safeSet(LONG_POS_KEY, JSON.stringify(m));
+    }
     const start = Math.max(0, queueIndex - 50);
     safeSet(
       SESSION_KEY,
@@ -597,11 +618,11 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         const a = audioRef.current;
         if (prev === null || prev <= 1) {
           pause();
-          if (a) a.volume = volumeRef.current; // undo the fade for the next play
+          if (a) a.volume = volumeRef.current * gainRef.current; // undo the fade for the next play
           return null;
         }
         // gentle fade-out over the last 10 seconds
-        if (a && prev <= 11 && !djTransRef.current) a.volume = volumeRef.current * Math.max(0, (prev - 1) / 10);
+        if (a && prev <= 11 && !djTransRef.current) a.volume = volumeRef.current * gainRef.current * Math.max(0, (prev - 1) / 10);
         return prev - 1;
       });
     }, 1000);
@@ -740,8 +761,12 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     audioRef.current.src = streamUrl;
     audioRef.current.playbackRate = playbackRateRef.current;
-    const resumeAt = resumePosRef.current?.id === track.id ? resumePosRef.current.pos : 0;
+    let resumeAt = resumePosRef.current?.id === track.id ? resumePosRef.current.pos : 0;
     resumePosRef.current = null;
+    if (!resumeAt) resumeAt = loadJson<Record<string, number>>(LONG_POS_KEY, {})[track.id] || 0;
+    gainRef.current = getSettings().normalize ? loudnessGain(track.id) : 1;
+    logPlay(track);
+    console.info(`▶ ${track.title} – ${track.artist}`);
     if (resumeAt > 3) {
       const a = audioRef.current;
       a.addEventListener(
@@ -753,7 +778,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       );
     }
 
-    audioRef.current.volume = volume;
+    audioRef.current.volume = volume * gainRef.current;
     audioRef.current.muted = isMuted;
 
     try {
@@ -1423,7 +1448,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const setVolume = (val: number) => {
     volumeRef.current = val;
     if (audioRef.current) {
-      if (!djTransRef.current) audioRef.current.volume = val;
+      if (!djTransRef.current) audioRef.current.volume = val * gainRef.current;
       setVolumeState(val);
       setIsMuted(val === 0);
     }
@@ -1564,8 +1589,57 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setPlaylists((prev) => prev.filter((pl) => pl.id !== playlistId));
   };
 
+  const renamePlaylist = (playlistId: string, name: string) => {
+    setPlaylists((prev) => prev.map((pl) => (pl.id === playlistId ? { ...pl, name } : pl)));
+  };
+
+  const movePlaylistTrack = (playlistId: string, from: number, to: number) => {
+    setPlaylists((prev) =>
+      prev.map((pl) => {
+        if (pl.id !== playlistId || to < 0 || to >= pl.tracks.length) return pl;
+        const tracks = [...pl.tracks];
+        const [t] = tracks.splice(from, 1);
+        tracks.splice(to, 0, t);
+        return { ...pl, tracks };
+      })
+    );
+  };
+
+  /** New playlist with these songs; returns its id. */
+  const createPlaylistWith = (name: string, tracks: Track[]): string => {
+    const seen = new Set<string>();
+    const list = tracks.filter((t) => !seen.has(t.id) && seen.add(t.id));
+    const id = `pl_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    setPlaylists((prev) => [{ id, name, tracks: list, createdAt: Date.now(), cover: list[0]?.thumbnail }, ...prev]);
+    return id;
+  };
+
+  const moveInQueue = (from: number, to: number) => {
+    if (from === to || to < 0 || to >= queue.length) return;
+    const q = [...queue];
+    const [t] = q.splice(from, 1);
+    q.splice(to, 0, t);
+    setQueue(q);
+    if (from === queueIndex) setQueueIndex(to);
+    else if (from < queueIndex && to >= queueIndex) setQueueIndex(queueIndex - 1);
+    else if (from > queueIndex && to <= queueIndex) setQueueIndex(queueIndex + 1);
+    shuffleNextRef.current = null;
+  };
+
+  // functional updates: called later from an undo toast, when this render's queue is stale
+  const insertIntoQueue = (index: number, track: Track) => {
+    setQueue((prev) => {
+      const i = Math.max(0, Math.min(index, prev.length));
+      return [...prev.slice(0, i), track, ...prev.slice(i)];
+    });
+    setQueueIndex((prev) => (index <= prev ? prev + 1 : prev));
+  };
+
+  const removeFromHistory = (trackId: string) => setHistory((prev) => prev.filter((t) => t.id !== trackId));
+  const clearHistory = () => setHistory([]);
+
   const setSleepTimer = (minutes: number | null) => {
-    if (audioRef.current && !djTransRef.current) audioRef.current.volume = volumeRef.current;
+    if (audioRef.current && !djTransRef.current) audioRef.current.volume = volumeRef.current * gainRef.current;
     sleepEndRef.current = false;
     setSleepAtTrackEndState(false);
     if (minutes === null) {
@@ -1654,6 +1728,13 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         addToPlaylist,
         removeFromPlaylist,
         deletePlaylist,
+        renamePlaylist,
+        movePlaylistTrack,
+        createPlaylistWith,
+        moveInQueue,
+        insertIntoQueue,
+        removeFromHistory,
+        clearHistory,
         setSleepTimer,
         sleepAtTrackEnd,
         setSleepAtTrackEnd,

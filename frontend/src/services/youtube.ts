@@ -92,6 +92,14 @@ const urlCache = new Map<string, { url: string; expires: number }>();
 
 export const forgetAudioUrl = (videoId: string) => urlCache.delete(videoId);
 
+// YouTube's loudness of each song relative to its reference level (dB, > 0 = louder)
+const loudness = new Map<string, number>();
+/** Volume factor that turns loud songs down to the reference level (never up). */
+export const loudnessGain = (videoId: string): number => {
+  const db = loudness.get(videoId);
+  return typeof db === 'number' && db > 0 ? Math.max(0.3, Math.pow(10, -db / 20)) : 1;
+};
+
 export const getDirectAudioUrl = async (videoId: string): Promise<string> => {
   const cached = urlCache.get(videoId);
   if (cached && cached.expires > Date.now()) return cached.url;
@@ -131,6 +139,8 @@ export const getDirectAudioUrl = async (videoId: string): Promise<string> => {
     body,
   });
   const data = JSON.parse(txt);
+  const ldb = data?.playerConfig?.audioConfig?.loudnessDb;
+  if (typeof ldb === 'number') loudness.set(videoId, ldb);
   const status = data?.playabilityStatus?.status;
   if (status !== 'OK') {
     // visitor data may be stale -> refresh next time
@@ -330,8 +340,24 @@ const SONGS_PARAM = 'EgWKAQIIAWoMEA4QChADEAQQCRAF';
 
 const VIDEOS_PARAM = 'EgWKAQIQAWoMEA4QChADEAQQCRAF';
 
+let lastCorrection: { query: string; fix: string } | null = null;
+/** "Meintest du …": YouTube's spelling correction from the last search of this query. */
+export const correctionFor = (query: string): string | null =>
+  lastCorrection && lastCorrection.query === query ? lastCorrection.fix : null;
+
+export const getSearchSuggestions = async (input: string): Promise<string[]> => {
+  const data = await musicRequest('music/get_search_suggestions', { input });
+  return collect(data, 'searchSuggestionRenderer')
+    .map((r: any) => runsText(r.suggestion))
+    .filter(Boolean)
+    .slice(0, 6);
+};
+
 const searchWith = async (query: string, params: string): Promise<Track[]> => {
   const data = await musicRequest('search', { query, params });
+  const fixNode = collect(data, 'didYouMeanRenderer')[0] || collect(data, 'showingResultsForRenderer')[0];
+  const fix = fixNode ? runsText(fixNode.correctedQuery) : '';
+  lastCorrection = fix && fix.toLowerCase() !== query.toLowerCase() ? { query, fix } : lastCorrection?.query === query ? null : lastCorrection;
   return collect(data, 'musicResponsiveListItemRenderer')
     .map(parseListItem)
     .filter((t): t is Track => !!t);

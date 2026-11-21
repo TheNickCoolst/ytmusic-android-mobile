@@ -357,6 +357,15 @@ export const api = {
     return data.moods || [];
   },
 
+  async getSearchSuggestions(input: string): Promise<string[]> {
+    if (!yt.isNativeApp() || input.trim().length < 2) return [];
+    return yt.getSearchSuggestions(input.trim()).catch(() => []);
+  },
+
+  correctionFor(query: string): string | null {
+    return yt.correctionFor(query);
+  },
+
   async getRadio(videoId: string): Promise<Track[]> {
     try {
       return await withFallback(
@@ -464,9 +473,15 @@ export const api = {
   },
 
   /** In the app: saved on the phone itself. In the browser: cached by the Mac server. */
-  async downloadTrack(videoId: string, meta?: { title?: string; artist?: string; thumbnail?: string; duration?: string }) {
+  async downloadTrack(
+    videoId: string,
+    meta?: { title?: string; artist?: string; thumbnail?: string; duration?: string },
+    onProgress?: (fraction: number) => void
+  ) {
     if (yt.isNativeApp()) {
-      await offline.downloadOffline(videoId, meta);
+      const { getSettings, onCellular } = await import('./settings');
+      if (getSettings().wifiOnlyDownloads && onCellular()) throw new Error('Nur im WLAN (siehe Einstellungen)');
+      await offline.downloadOffline(videoId, meta, onProgress);
       return { ok: true };
     }
     const res = await fetch(`${getApiBase()}/download/${videoId}`, {

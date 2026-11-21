@@ -14,6 +14,8 @@ import { initUpdater, applyUpdate, UpdateStatus, currentWebBuild, installDownloa
 import { googleAuthService } from './services/googleAuth';
 import { Capacitor } from '@capacitor/core';
 import { Toaster } from './components/Toaster';
+import { SettingsModal } from './components/SettingsModal';
+import { CHANGELOG, CHANGELOG_ID } from './services/changelog';
 import { useBackClose, useOnline } from './services/ui';
 
 const PlaybackErrorBanner: React.FC = () => {
@@ -126,6 +128,39 @@ const OfflineBanner: React.FC = () => {
 };
 
 const TAB_KEY = 'ytmusic_last_tab';
+const SEEN_KEY = 'ytmusic_seen_changelog';
+
+/** "Was ist neu" once after an update (not on a fresh install). */
+const WhatsNew: React.FC = () => {
+  const [open, setOpen] = useState(() => {
+    try {
+      const seen = localStorage.getItem(SEEN_KEY);
+      if (seen === CHANGELOG_ID) return false;
+      const used = !!localStorage.getItem('ytmusic_history');
+      localStorage.setItem(SEEN_KEY, CHANGELOG_ID);
+      return used;
+    } catch {
+      return false;
+    }
+  });
+  useBackClose(open, () => setOpen(false));
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-[70] bg-black/80 flex items-end sm:items-center justify-center p-3" onClick={() => setOpen(false)}>
+      <div className="w-full max-w-md bg-[#1c1c1c] border border-white/10 rounded-2xl p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <h2 className="text-lg font-black text-white">✨ Was ist neu</h2>
+        <ul className="mt-3 space-y-2 text-xs text-zinc-300 list-disc pl-4 max-h-[50vh] overflow-y-auto">
+          {CHANGELOG.map((c) => (
+            <li key={c}>{c}</li>
+          ))}
+        </ul>
+        <button onClick={() => setOpen(false)} className="mt-5 w-full py-2.5 rounded-full bg-white text-black text-sm font-bold active:scale-95">
+          Los geht's
+        </button>
+      </div>
+    </div>
+  );
+};
 
 const AppContent: React.FC = () => {
   const { isPlayerExpanded, setIsPlayerExpanded, togglePlay, nextTrack, previousTrack } = usePlayer();
@@ -161,6 +196,7 @@ const AppContent: React.FC = () => {
   const [moodChips, setMoodChips] = useState<string[] | null>(null);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [userProfile, setUserProfile] = useState<UserProfile>({
     isLoggedIn: false,
     name: 'Gast'
@@ -206,10 +242,38 @@ const AppContent: React.FC = () => {
     }
   };
 
+  // "Mehr von <Künstler>" etc.: open the search with a query
+  const [searchSeed, setSearchSeed] = useState<{ q: string; n: number } | null>(null);
+  useEffect(() => {
+    const onSearch = (e: Event) => {
+      const q = String((e as CustomEvent).detail || '').trim();
+      if (!q) return;
+      setSearchSeed({ q, n: Date.now() });
+      setIsSearchOpen(true);
+    };
+    window.addEventListener('ytm:search', onSearch);
+    // Android "Teilen" -> this app: a YouTube link (or any text) opens in the search
+    const onShared = () => {
+      const t = (window as any).__sharedText;
+      (window as any).__sharedText = null;
+      if (typeof t === 'string' && t.trim()) {
+        setSearchSeed({ q: t.trim().slice(0, 300), n: Date.now() });
+        setIsSearchOpen(true);
+      }
+    };
+    window.addEventListener('ytm:shared', onShared);
+    onShared();
+    return () => {
+      window.removeEventListener('ytm:search', onSearch);
+      window.removeEventListener('ytm:shared', onShared);
+    };
+  }, []);
+
   // Android back button closes the open screen instead of leaving the app
   useBackClose(isSearchOpen, () => setIsSearchOpen(false));
   useBackClose(isPlayerExpanded, () => setIsPlayerExpanded(false));
   useBackClose(isAuthOpen, () => setIsAuthOpen(false));
+  useBackClose(isSettingsOpen, () => setIsSettingsOpen(false));
 
   // keyboard (browser / tablet with keyboard): space = play/pause, shift+arrows = skip
   const keysRef = useRef({ togglePlay, nextTrack, previousTrack });
@@ -235,6 +299,7 @@ const AppContent: React.FC = () => {
         userProfile={userProfile}
         onOpenAuth={() => setIsAuthOpen(true)}
         onOpenSearch={() => setIsSearchOpen(true)}
+        onOpenSettings={() => setIsSettingsOpen(true)}
         activeFilter={activeMoodFilter}
         onSelectFilter={handleSelectFilter}
         chips={moodChips}
@@ -255,7 +320,7 @@ const AppContent: React.FC = () => {
                 Schließen
               </button>
             </div>
-            <SearchView />
+            <SearchView key={searchSeed?.n || 0} initialQuery={searchSeed?.q} />
           </div>
         ) : (
           <>
@@ -296,6 +361,9 @@ const AppContent: React.FC = () => {
 
       {/* Fullscreen Now Playing Modal (1:1 YTM + 550 Upgrades) */}
       <NowPlayingModal />
+
+      <SettingsModal open={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
+      <WhatsNew />
 
       {/* Google Account Authentication Modal */}
       <AuthModal

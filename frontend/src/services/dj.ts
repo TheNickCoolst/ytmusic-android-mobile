@@ -314,7 +314,11 @@ const fetchRetry = async (url: string, tries = 3): Promise<Uint8Array> => {
 };
 
 /** Download the full audio file. YouTube URLs are fetched as parallel range chunks (fast, not throttled). */
-export const downloadAudio = async (id: string, skipOffline = false): Promise<{ bytes: Uint8Array; mime: string }> => {
+export const downloadAudio = async (
+  id: string,
+  skipOffline = false,
+  onProgress?: (fraction: number) => void
+): Promise<{ bytes: Uint8Array; mime: string }> => {
   if (!skipOffline) {
     const local = await (await import('./offline')).getOfflineBytes(id);
     if (local) return local;
@@ -330,11 +334,13 @@ export const downloadAudio = async (id: string, skipOffline = false): Promise<{ 
       for (let s = 0; s < clen; s += CH) ranges.push([s, Math.min(clen, s + CH) - 1]);
       const parts: Uint8Array[] = new Array(ranges.length);
       let next = 0;
+      let done = 0;
       const worker = async () => {
         while (next < ranges.length) {
           const i = next++;
           const [s, e] = ranges[i];
           parts[i] = await fetchRetry(`${url}&range=${s}-${e}`);
+          onProgress?.(++done / ranges.length);
         }
       };
       await Promise.all([worker(), worker(), worker(), worker()]);

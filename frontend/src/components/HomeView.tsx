@@ -1,39 +1,28 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, MoreVertical, Flame, RefreshCw, Loader2, Sparkles, Disc, Shuffle, Gift } from 'lucide-react';
+import { Play, MoreVertical, Flame, RefreshCw, Loader2, Sparkles, Disc, ArrowDown } from 'lucide-react';
 import { Track } from '../types';
 import { api } from '../services/api';
 import { isNativeApp, HomeCard } from '../services/youtube';
 import { usePlayer } from '../context/PlayerContext';
-import { greeting } from '../services/ui';
+import { greeting, tap, toast } from '../services/ui';
+import { HomeExtras } from './HomeExtras';
 
-// Weihnachtsplaylist: shown 1 Nov – 6 Jan, built from YouTube Music song searches
-const XMAS_QUERIES = ['Weihnachtslieder', 'Christmas Songs Klassiker', 'Deutsche Weihnachtslieder'];
-const isXmasSeason = (d = new Date()) => d.getMonth() >= 10 || (d.getMonth() === 0 && d.getDate() <= 6);
-let xmasCache: Track[] | null = null;
-const loadXmas = async (): Promise<Track[]> => {
-  if (xmasCache) return xmasCache;
-  const lists = await Promise.all(XMAS_QUERIES.map((q) => api.search(q, 'songs').catch(() => [] as Track[])));
-  const seen = new Set<string>();
-  const out: Track[] = [];
-  for (let i = 0; i < Math.max(...lists.map((l) => l.length)); i++) {
-    for (const l of lists) {
-      const t = l[i];
-      if (t && !seen.has(t.id)) {
-        seen.add(t.id);
-        out.push(t);
-      }
-    }
+const HOME_CACHE_KEY = 'ytmusic_home_cache';
+const readHomeCache = (): any[] | null => {
+  try {
+    const v = JSON.parse(localStorage.getItem(HOME_CACHE_KEY) || 'null');
+    return Array.isArray(v) && v.length ? v : null;
+  } catch {
+    return null;
   }
-  if (out.length) xmasCache = out.slice(0, 50);
-  return out.slice(0, 50);
 };
-const shuffled = <T,>(a: T[]) => {
-  const b = [...a];
-  for (let i = b.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [b[i], b[j]] = [b[j], b[i]];
+const writeHomeCache = (shelves: any[]) => {
+  try {
+    const json = JSON.stringify(shelves.slice(0, 8));
+    if (json.length < 400_000) localStorage.setItem(HOME_CACHE_KEY, json);
+  } catch {
+    /* ignore */
   }
-  return b;
 };
 
 interface HomeViewProps {
@@ -68,8 +57,13 @@ export const HomeView: React.FC<HomeViewProps> = ({ filterMood, onChips, account
   };
 
   const loadFeed = async (mood?: string | null) => {
-    setLoading(true);
     const token = ++loadTokenRef.current;
+    // start page: show the last one right away (and offline), then replace it with the fresh one
+    const cached = !mood ? readHomeCache() : null;
+    if (cached) {
+      setShelves(cached);
+      setLoading(false);
+    } else setLoading(true);
     try {
       const chipParams = mood ? chipParamsRef.current[mood] : undefined;
       if (isNativeApp() && (!mood || chipParams)) {
@@ -77,6 +71,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ filterMood, onChips, account
         const data = await api.getHomeFeed('DE', chipParams);
         if (token !== loadTokenRef.current) return;
         setShelves(data.shelves || []);
+        if (!mood && data.shelves?.length) writeHomeCache(data.shelves);
         if (!mood && data.chips?.length) {
           chipParamsRef.current = Object.fromEntries(data.chips.map((c) => [c.title, c.params]));
           onChips?.(data.chips.map((c) => c.title));
@@ -123,8 +118,9 @@ export const HomeView: React.FC<HomeViewProps> = ({ filterMood, onChips, account
       }
     } catch (err) {
       console.error('Failed to load home feed:', err);
+      if (cached && token === loadTokenRef.current) toast('Offline – zeige die zuletzt geladene Startseite');
     } finally {
-      setLoading(false);
+      if (token === loadTokenRef.current) setLoading(false);
     }
   };
 
@@ -145,15 +141,28 @@ export const HomeView: React.FC<HomeViewProps> = ({ filterMood, onChips, account
     };
   }, [loggedIn, accountKey, filterMood]);
 
-  const [xmas, setXmas] = useState<Track[]>(xmasCache || []);
-  useEffect(() => {
-    if (filterMood || !isXmasSeason()) return;
-    let alive = true;
-    loadXmas().then((t) => alive && setXmas(t));
-    return () => {
-      alive = false;
-    };
-  }, [filterMood]);
+  // pull down at the top = reload the start page
+  const pullRef = useRef<{ y: number; active: boolean } | null>(null);
+  const [pull, setPull] = useState(0);
+  const scroller = () => document.querySelector('main');
+  const onPullStart = (e: React.TouchEvent) => {
+    pullRef.current = { y: e.touches[0].clientY, active: (scroller()?.scrollTop || 0) <= 0 };
+  };
+  const onPullMove = (e: React.TouchEvent) => {
+    const p = pullRef.current;
+    if (!p?.active) return;
+    const dy = e.touches[0].clientY - p.y;
+    setPull(dy > 0 ? Math.min(110, dy * 0.6) : 0);
+  };
+  const onPullEnd = () => {
+    const p = pullRef.current;
+    pullRef.current = null;
+    if (p?.active && pull >= 70 && !loading) {
+      tap();
+      loadFeed(filterMood);
+    }
+    setPull(0);
+  };
 
   const recent = loggedIn ? accountHistory : history;
 
@@ -166,7 +175,14 @@ export const HomeView: React.FC<HomeViewProps> = ({ filterMood, onChips, account
   });
 
   return (
-    <div className="pb-36 space-y-7 pt-2 select-none">
+    <div className="pb-36 space-y-7 pt-2 select-none" onTouchStart={onPullStart} onTouchMove={onPullMove} onTouchEnd={onPullEnd}>
+      {pull > 0 && (
+        <div className="flex justify-center -mb-5" style={{ height: pull }}>
+          <ArrowDown
+            className={`w-5 h-5 mt-2 transition-transform ${pull >= 70 ? 'rotate-180 text-red-500' : 'text-zinc-500'}`}
+          />
+        </div>
+      )}
       {!filterMood && (
         <h1 className="px-4 pt-1 -mb-3 text-2xl font-black text-white tracking-tight">
           {greeting()}
@@ -216,53 +232,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ filterMood, onChips, account
         </section>
       )}
 
-      {!loading && !filterMood && xmas.length > 0 && isXmasSeason() && (
-        <section className="px-4">
-          <div className="rounded-2xl bg-gradient-to-br from-red-700 via-red-900 to-emerald-900 p-4 mb-3 flex items-center gap-3 shadow-lg">
-            <div className="w-12 h-12 rounded-xl bg-white/15 flex items-center justify-center flex-shrink-0">
-              <Gift className="w-6 h-6 text-white" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-[10px] font-bold uppercase tracking-wider text-white/70">Playlist · {xmas.length} Titel</div>
-              <h2 className="text-xl font-black text-white tracking-tight truncate">🎄 Weihnachtsplaylist</h2>
-            </div>
-            <button
-              onClick={() => {
-                const s = shuffled(xmas);
-                playTrack(s[0], s);
-              }}
-              aria-label="Zufallswiedergabe"
-              className="w-10 h-10 rounded-full bg-white/15 flex items-center justify-center active:scale-95 transition"
-            >
-              <Shuffle className="w-5 h-5 text-white" />
-            </button>
-            <button
-              onClick={() => playTrack(xmas[0], xmas)}
-              aria-label="Abspielen"
-              className="w-11 h-11 rounded-full bg-white flex items-center justify-center active:scale-95 transition"
-            >
-              <Play className="w-5 h-5 text-black fill-black ml-0.5" />
-            </button>
-          </div>
-          <div className="flex space-x-3 overflow-x-auto pb-2 scrollbar-none -mx-4 px-4">
-            {xmas.slice(0, 15).map((track) => (
-              <div
-                key={track.id}
-                onClick={() => playTrack(track, xmas)}
-                className="w-32 flex-shrink-0 cursor-pointer active:scale-95 transition"
-              >
-                <div className="aspect-square rounded-xl overflow-hidden bg-zinc-900 shadow-md mb-2">
-                  <img src={track.thumbnail} alt={track.title} loading="lazy" className="w-full h-full object-cover" />
-                </div>
-                <div className={`text-xs font-semibold truncate ${currentTrack?.id === track.id ? 'text-red-400' : 'text-white'}`}>
-                  {track.title}
-                </div>
-                <div className="text-[11px] text-zinc-400 truncate">{track.artist}</div>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
+      {!loading && !filterMood && <HomeExtras recent={recent} />}
 
       {loading ? (
         <div className="flex flex-col items-center justify-center py-20 text-zinc-500 space-y-2">

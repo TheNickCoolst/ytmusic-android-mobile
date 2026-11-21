@@ -2,19 +2,24 @@
 import { useEffect, useRef, useSyncExternalStore } from 'react';
 
 // ---------- toasts ----------
-export type Toast = { id: number; text: string; kind: 'info' | 'error' };
+export type ToastAction = { label: string; run: () => void };
+export type Toast = { id: number; text: string; kind: 'info' | 'error'; action?: ToastAction };
 let toasts: Toast[] = [];
 const toastListeners = new Set<() => void>();
 const emitToasts = () => toastListeners.forEach((l) => l());
 
-export const toast = (text: string, kind: Toast['kind'] = 'info') => {
+export const toast = (text: string, kind: Toast['kind'] = 'info', action?: ToastAction) => {
   const id = Date.now() + Math.random();
-  toasts = [...toasts.filter((t) => t.text !== text), { id, text, kind }].slice(-3);
+  toasts = [...toasts.filter((t) => t.text !== text), { id, text, kind, action }].slice(-3);
   emitToasts();
   setTimeout(() => {
     toasts = toasts.filter((t) => t.id !== id);
     emitToasts();
-  }, kind === 'error' ? 4500 : 2200);
+  }, action ? 5000 : kind === 'error' ? 4500 : 2200);
+};
+export const dismissToast = (id: number) => {
+  toasts = toasts.filter((t) => t.id !== id);
+  emitToasts();
 };
 
 export const useToasts = () =>
