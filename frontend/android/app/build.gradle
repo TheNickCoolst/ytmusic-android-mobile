@@ -17,6 +17,18 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    // CI signs with the same debug key as the installed app (-PappKeystore=...), otherwise
+    // Android refuses the update ("App nicht installiert").
+    signingConfigs {
+        debug {
+            if (project.hasProperty("appKeystore")) {
+                storeFile file(project.property("appKeystore"))
+                storePassword "android"
+                keyAlias "androiddebugkey"
+                keyPassword "android"
+            }
+        }
+    }
     buildTypes {
         release {
             minifyEnabled false
