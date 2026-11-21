@@ -625,7 +625,16 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       const resolved = await api.resolvePlaybackUrl(track.id);
       streamUrl = resolved.url;
       directSrcRef.current = resolved.direct;
-    } catch {
+    } catch (e) {
+      if (isNativeApp()) {
+        // app: no Mac server fallback
+        if (token !== playTokenRef.current) return;
+        console.error('Stream URL failed:', e);
+        setIsBuffering(false);
+        setIsPlaying(false);
+        setPlaybackError('Song konnte nicht geladen werden. Bitte Internetverbindung prüfen und nochmal antippen.');
+        return;
+      }
       streamUrl = api.getStreamUrl(track.id);
       directSrcRef.current = false;
     }

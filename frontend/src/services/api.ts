@@ -12,18 +12,17 @@ const markServerUp = () => {
   serverDownUntil = 0;
 };
 
-/** Try the Mac server first (short timeout); in the APK fall back to direct YouTube access. */
+/** In the app everything goes directly to YouTube (the Mac only signs/updates the apps);
+ *  the Mac server is used only by the browser version. */
 async function withFallback<T>(serverCall: (signal: AbortSignal) => Promise<T>, nativeCall: () => Promise<T>): Promise<T> {
-  const native = yt.isNativeApp();
-  if (native && isServerMarkedDown()) return nativeCall();
+  if (yt.isNativeApp()) return nativeCall();
   try {
-    const result = await serverCall(AbortSignal.timeout(native ? 4000 : 15000));
+    const result = await serverCall(AbortSignal.timeout(15000));
     markServerUp();
     return result;
   } catch (e) {
-    if (!native) throw e;
     markServerDown();
-    return nativeCall();
+    throw e;
   }
 }
 
@@ -351,17 +350,21 @@ export const api = {
     }
   },
 
-  /** Best playable URL: in the APK direct from YouTube (no Mac needed), otherwise via the server. */
-  async resolvePlaybackUrl(videoId: string, preferServer = false): Promise<{ url: string; direct: boolean }> {
+  /** Best playable URL: offline copy, else in the app direct from YouTube, in the browser via the server.
+   *  `fresh` (app) drops the cached YouTube URL, e.g. after a playback error. */
+  async resolvePlaybackUrl(videoId: string, fresh = false): Promise<{ url: string; direct: boolean }> {
     if (offline.isOffline(videoId)) {
       const local = await offline.getOfflineUrl(videoId);
       if (local) return { url: local, direct: true };
     }
-    if (yt.isNativeApp() && !preferServer) {
+    if (yt.isNativeApp()) {
+      if (fresh) yt.forgetAudioUrl(videoId);
       try {
         return { url: await yt.getDirectAudioUrl(videoId), direct: true };
       } catch (e) {
-        console.warn('Direct YouTube stream failed, using server:', e);
+        console.warn('Direct YouTube stream failed, retrying:', e);
+        yt.forgetAudioUrl(videoId);
+        return { url: await yt.getDirectAudioUrl(videoId), direct: true };
       }
     }
     return { url: this.getStreamUrl(videoId), direct: false };

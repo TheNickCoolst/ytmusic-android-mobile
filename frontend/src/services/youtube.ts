@@ -90,6 +90,8 @@ const getVisitorData = async (): Promise<string | null> => {
 // ---------- audio stream URL ----------
 const urlCache = new Map<string, { url: string; expires: number }>();
 
+export const forgetAudioUrl = (videoId: string) => urlCache.delete(videoId);
+
 export const getDirectAudioUrl = async (videoId: string): Promise<string> => {
   const cached = urlCache.get(videoId);
   if (cached && cached.expires > Date.now()) return cached.url;
