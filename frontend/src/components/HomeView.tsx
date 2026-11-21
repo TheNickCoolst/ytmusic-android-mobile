@@ -1,9 +1,39 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, MoreVertical, Flame, RefreshCw, Loader2, Sparkles, Disc } from 'lucide-react';
+import { Play, MoreVertical, Flame, RefreshCw, Loader2, Sparkles, Disc, Shuffle, Gift } from 'lucide-react';
 import { Track } from '../types';
 import { api } from '../services/api';
 import { isNativeApp, HomeCard } from '../services/youtube';
 import { usePlayer } from '../context/PlayerContext';
+
+// Weihnachtsplaylist: shown 1 Nov – 6 Jan, built from YouTube Music song searches
+const XMAS_QUERIES = ['Weihnachtslieder', 'Christmas Songs Klassiker', 'Deutsche Weihnachtslieder'];
+const isXmasSeason = (d = new Date()) => d.getMonth() >= 10 || (d.getMonth() === 0 && d.getDate() <= 6);
+let xmasCache: Track[] | null = null;
+const loadXmas = async (): Promise<Track[]> => {
+  if (xmasCache) return xmasCache;
+  const lists = await Promise.all(XMAS_QUERIES.map((q) => api.search(q, 'songs').catch(() => [] as Track[])));
+  const seen = new Set<string>();
+  const out: Track[] = [];
+  for (let i = 0; i < Math.max(...lists.map((l) => l.length)); i++) {
+    for (const l of lists) {
+      const t = l[i];
+      if (t && !seen.has(t.id)) {
+        seen.add(t.id);
+        out.push(t);
+      }
+    }
+  }
+  if (out.length) xmasCache = out.slice(0, 50);
+  return out.slice(0, 50);
+};
+const shuffled = <T,>(a: T[]) => {
+  const b = [...a];
+  for (let i = b.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [b[i], b[j]] = [b[j], b[i]];
+  }
+  return b;
+};
 
 interface HomeViewProps {
   filterMood?: string | null;
@@ -114,6 +144,16 @@ export const HomeView: React.FC<HomeViewProps> = ({ filterMood, onChips, account
     };
   }, [loggedIn, accountKey, filterMood]);
 
+  const [xmas, setXmas] = useState<Track[]>(xmasCache || []);
+  useEffect(() => {
+    if (filterMood || !isXmasSeason()) return;
+    let alive = true;
+    loadXmas().then((t) => alive && setXmas(t));
+    return () => {
+      alive = false;
+    };
+  }, [filterMood]);
+
   const recent = loggedIn ? accountHistory : history;
 
   // YouTube's own "Wieder reinhören" shelf already shows recent plays -> no second row
@@ -165,6 +205,54 @@ export const HomeView: React.FC<HomeViewProps> = ({ filterMood, onChips, account
                 </div>
               );
             })}
+          </div>
+        </section>
+      )}
+
+      {!loading && !filterMood && xmas.length > 0 && isXmasSeason() && (
+        <section className="px-4">
+          <div className="rounded-2xl bg-gradient-to-br from-red-700 via-red-900 to-emerald-900 p-4 mb-3 flex items-center gap-3 shadow-lg">
+            <div className="w-12 h-12 rounded-xl bg-white/15 flex items-center justify-center flex-shrink-0">
+              <Gift className="w-6 h-6 text-white" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-white/70">Playlist · {xmas.length} Titel</div>
+              <h2 className="text-xl font-black text-white tracking-tight truncate">🎄 Weihnachtsplaylist</h2>
+            </div>
+            <button
+              onClick={() => {
+                const s = shuffled(xmas);
+                playTrack(s[0], s);
+              }}
+              aria-label="Zufallswiedergabe"
+              className="w-10 h-10 rounded-full bg-white/15 flex items-center justify-center active:scale-95 transition"
+            >
+              <Shuffle className="w-5 h-5 text-white" />
+            </button>
+            <button
+              onClick={() => playTrack(xmas[0], xmas)}
+              aria-label="Abspielen"
+              className="w-11 h-11 rounded-full bg-white flex items-center justify-center active:scale-95 transition"
+            >
+              <Play className="w-5 h-5 text-black fill-black ml-0.5" />
+            </button>
+          </div>
+          <div className="flex space-x-3 overflow-x-auto pb-2 scrollbar-none -mx-4 px-4">
+            {xmas.slice(0, 15).map((track) => (
+              <div
+                key={track.id}
+                onClick={() => playTrack(track, xmas)}
+                className="w-32 flex-shrink-0 cursor-pointer active:scale-95 transition"
+              >
+                <div className="aspect-square rounded-xl overflow-hidden bg-zinc-900 shadow-md mb-2">
+                  <img src={track.thumbnail} alt={track.title} loading="lazy" className="w-full h-full object-cover" />
+                </div>
+                <div className={`text-xs font-semibold truncate ${currentTrack?.id === track.id ? 'text-red-400' : 'text-white'}`}>
+                  {track.title}
+                </div>
+                <div className="text-[11px] text-zinc-400 truncate">{track.artist}</div>
+              </div>
+            ))}
           </div>
         </section>
       )}

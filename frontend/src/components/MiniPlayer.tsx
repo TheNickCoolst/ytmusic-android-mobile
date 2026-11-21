@@ -1,6 +1,6 @@
 import React from 'react';
 import { Play, Pause, SkipForward, Heart, Loader2 } from 'lucide-react';
-import { usePlayer } from '../context/PlayerContext';
+import { usePlayer, usePlaybackTime } from '../context/PlayerContext';
 
 export const MiniPlayer: React.FC = () => {
   const {
@@ -9,12 +9,12 @@ export const MiniPlayer: React.FC = () => {
     isBuffering,
     togglePlay,
     nextTrack,
-    currentTime,
     duration,
     setIsPlayerExpanded,
     toggleLike,
     isLiked,
   } = usePlayer();
+  const currentTime = usePlaybackTime();
 
   if (!currentTrack) return null;
 

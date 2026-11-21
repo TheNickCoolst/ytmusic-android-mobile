@@ -31,7 +31,7 @@ import {
   VolumeX,
   X
 } from 'lucide-react';
-import { usePlayer } from '../context/PlayerContext';
+import { usePlayer, usePlaybackTime } from '../context/PlayerContext';
 import { api } from '../services/api';
 import { EqualizerPreset } from '../types';
 
@@ -66,7 +66,6 @@ export const NowPlayingModal: React.FC = () => {
     currentTrack,
     isPlaying,
     isBuffering,
-    currentTime,
     duration,
     togglePlay,
     nextTrack,
@@ -109,6 +108,7 @@ export const NowPlayingModal: React.FC = () => {
     setDjMode,
     djStatus,
   } = usePlayer();
+  const currentTime = usePlaybackTime();
 
   const [activeTab, setActiveTab] = useState<'queue' | 'lyrics' | 'eq'>('queue');
   const [lyrics, setLyrics] = useState<string | null>(null);

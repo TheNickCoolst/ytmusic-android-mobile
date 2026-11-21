@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, useSyncExternalStore } from 'react';
 import { Track, Playlist, RepeatMode, EqualizerPreset } from '../types';
 import { api, isServerMarkedDown } from '../services/api';
 import { isNativeApp, reportPlayback } from '../services/youtube';
@@ -24,7 +24,6 @@ interface PlayerContextType {
   currentTrack: Track | null;
   isPlaying: boolean;
   isBuffering: boolean;
-  currentTime: number;
   duration: number;
   volume: number;
   isMuted: boolean;
@@ -99,6 +98,21 @@ interface PlayerContextType {
 
 const PlayerContext = createContext<PlayerContextType | null>(null);
 
+// Playback position lives outside React state: timeupdate fires ~4x/s, and as context state it
+// re-rendered the whole app (every TrackItem) each time. Only the players subscribe to it.
+let playbackTime = 0;
+const timeListeners = new Set<() => void>();
+const setCurrentTime = (t: number) => {
+  if (t === playbackTime) return;
+  playbackTime = t;
+  timeListeners.forEach((l) => l());
+};
+const subscribeTime = (l: () => void) => {
+  timeListeners.add(l);
+  return () => timeListeners.delete(l);
+};
+export const usePlaybackTime = () => useSyncExternalStore(subscribeTime, () => playbackTime);
+
 const STORAGE_KEYS = {
   LIKED: 'ytmusic_liked_tracks',
   DISLIKED: 'ytmusic_disliked_ids',
@@ -111,7 +125,6 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [currentTrack, setCurrentTrack] = useState<Track | null>(null);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [isBuffering, setIsBuffering] = useState<boolean>(false);
-  const [currentTime, setCurrentTime] = useState<number>(0);
   const [duration, setDuration] = useState<number>(0);
   const [volume, setVolumeState] = useState<number>(1);
   const [isMuted, setIsMuted] = useState<boolean>(false);
@@ -1405,7 +1418,6 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         currentTrack,
         isPlaying,
         isBuffering,
-        currentTime,
         duration,
         volume,
         isMuted,
