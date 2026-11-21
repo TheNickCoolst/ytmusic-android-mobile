@@ -302,7 +302,11 @@ const fetchBytes = async (url: string): Promise<Uint8Array> => {
 };
 
 /** Download the full audio file. YouTube URLs are fetched as parallel range chunks (fast, not throttled). */
-const downloadAudio = async (id: string): Promise<{ bytes: Uint8Array; mime: string }> => {
+export const downloadAudio = async (id: string, skipOffline = false): Promise<{ bytes: Uint8Array; mime: string }> => {
+  if (!skipOffline) {
+    const local = await (await import('./offline')).getOfflineBytes(id);
+    if (local) return local;
+  }
   if (isNativeApp()) {
     const url = await getDirectAudioUrl(id);
     const u = new URL(url);

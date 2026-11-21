@@ -1,5 +1,6 @@
 import { Track, MoodCategory, LyricsResponse } from '../types';
 import * as yt from './youtube';
+import * as offline from './offline';
 
 // ---- Mac server reachability (the app works without it in the native APK) ----
 let serverDownUntil = 0;
@@ -352,6 +353,10 @@ export const api = {
 
   /** Best playable URL: in the APK direct from YouTube (no Mac needed), otherwise via the server. */
   async resolvePlaybackUrl(videoId: string, preferServer = false): Promise<{ url: string; direct: boolean }> {
+    if (offline.isOffline(videoId)) {
+      const local = await offline.getOfflineUrl(videoId);
+      if (local) return { url: local, direct: true };
+    }
     if (yt.isNativeApp() && !preferServer) {
       try {
         return { url: await yt.getDirectAudioUrl(videoId), direct: true };
@@ -367,6 +372,7 @@ export const api = {
   },
 
   async getCacheList() {
+    if (yt.isNativeApp()) return offline.listOffline();
     try {
       const res = await fetch(`${getApiBase()}/cache`);
       if (!res.ok) return { totalSizeMB: '0 MB', count: 0, tracks: [] };
@@ -377,16 +383,30 @@ export const api = {
   },
 
   async deleteFromCache(videoId: string) {
+    if (yt.isNativeApp()) {
+      await offline.deleteOffline(videoId);
+      return { ok: true };
+    }
     const res = await fetch(`${getApiBase()}/cache/${videoId}`, { method: 'DELETE' });
     return await res.json();
   },
 
+  /** In the app: saved on the phone itself. In the browser: cached by the Mac server. */
   async downloadTrack(videoId: string, meta?: { title?: string; artist?: string; thumbnail?: string; duration?: string }) {
+    if (yt.isNativeApp()) {
+      await offline.downloadOffline(videoId, meta);
+      return { ok: true };
+    }
     const res = await fetch(`${getApiBase()}/download/${videoId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(meta || {})
     });
+    if (!res.ok) throw new Error(`Download fehlgeschlagen (HTTP ${res.status})`);
     return await res.json();
+  },
+
+  isDownloaded(videoId: string): boolean {
+    return offline.isOffline(videoId);
   }
 };

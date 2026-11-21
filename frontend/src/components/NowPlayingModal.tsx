@@ -134,7 +134,7 @@ export const NowPlayingModal: React.FC = () => {
     setSyncedLines([]);
     setIsSynced(false);
     setLyricsSource(null);
-    setDownloaded(currentTrack.isCached || false);
+    setDownloaded(currentTrack.isCached || api.isDownloaded(currentTrack.id));
 
     api.getLyrics(currentTrack.id, currentTrack.title, currentTrack.artist)
       .then((res) => {
@@ -220,6 +220,7 @@ export const NowPlayingModal: React.FC = () => {
       setDownloaded(true);
     } catch (e) {
       console.error('Download failed:', e);
+      alert(`Download fehlgeschlagen: ${e instanceof Error ? e.message : e}`);
     } finally {
       setIsDownloading(false);
     }

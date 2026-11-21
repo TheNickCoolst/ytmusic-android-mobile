@@ -15,7 +15,7 @@ export const TrackItem: React.FC<TrackItemProps> = ({ track, index, playlistCont
   const [showMenu, setShowMenu] = useState(false);
   const [showPlaylistPicker, setShowPlaylistPicker] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
-  const [downloaded, setDownloaded] = useState(track.isCached || false);
+  const [downloaded, setDownloaded] = useState(track.isCached || api.isDownloaded(track.id));
 
   const isCurrent = currentTrack?.id === track.id;
   const liked = isLiked(track.id);
@@ -38,6 +38,7 @@ export const TrackItem: React.FC<TrackItemProps> = ({ track, index, playlistCont
       setDownloaded(true);
     } catch (err) {
       console.error('Download error:', err);
+      alert(`Download fehlgeschlagen: ${err instanceof Error ? err.message : err}`);
     } finally {
       setIsDownloading(false);
     }
