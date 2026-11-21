@@ -33,6 +33,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ userProfile, onOpenAut
   // YouTube Account synced data
   const [ytLikedSongs, setYtLikedSongs] = useState<Track[]>([]);
   const [ytPlaylists, setYtPlaylists] = useState<any[]>([]);
+  const [ytHistory, setYtHistory] = useState<Track[]>([]);
   const [cacheInfo, setCacheInfo] = useState<{ totalSizeMB: string; count: number; tracks: any[] }>({
     totalSizeMB: '0 MB',
     count: 0,
@@ -53,12 +54,14 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ userProfile, onOpenAut
     if (userProfile.isLoggedIn) {
       setLoading(true);
       try {
-        const [liked, pls] = await Promise.all([
+        const [liked, pls, hist] = await Promise.all([
           api.getUserLikedSongs().catch(() => []),
-          api.getUserPlaylists().catch(() => [])
+          api.getUserPlaylists().catch(() => []),
+          api.getUserHistory().catch(() => [])
         ]);
         setYtLikedSongs(liked);
         setYtPlaylists(pls);
+        setYtHistory(hist);
       } catch (err) {
         console.error('Failed to load user account library:', err);
       } finally {
@@ -83,6 +86,8 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ userProfile, onOpenAut
 
   // Determine which liked tracks to show (YouTube account liked songs take priority if logged in, else local)
   const displayLiked = userProfile.isLoggedIn && ytLikedSongs.length > 0 ? ytLikedSongs : likedTracks;
+  // logged in: listening history of the Google account
+  const displayHistory = userProfile.isLoggedIn && ytHistory.length > 0 ? ytHistory : history;
 
   const handleCreatePlaylist = (e: React.FormEvent) => {
     e.preventDefault();
@@ -191,7 +196,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ userProfile, onOpenAut
           { id: 'liked', label: `Lieblingslieder (${displayLiked.length})`, icon: Heart },
           { id: 'playlists', label: `Playlists (${ytPlaylists.length + playlists.length})`, icon: ListMusic },
           { id: 'downloads', label: `Offline (${cacheInfo.count})`, icon: Download },
-          { id: 'history', label: `Verlauf (${history.length})`, icon: HistoryIcon },
+          { id: 'history', label: `Verlauf (${displayHistory.length})`, icon: HistoryIcon },
         ].map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -554,17 +559,17 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ userProfile, onOpenAut
           {/* History tab */}
           {activeTab === 'history' && (
             <div className="space-y-1">
-              {history.length === 0 ? (
+              {displayHistory.length === 0 ? (
                 <div className="text-center py-12 text-zinc-500 text-xs">
                   Noch kein Verlauf vorhanden.
                 </div>
               ) : (
-                history.map((track, i) => (
+                displayHistory.map((track, i) => (
                   <TrackItem
                     key={`${track.id}-${i}`}
                     track={track}
                     index={i + 1}
-                    playlistContext={history}
+                    playlistContext={displayHistory}
                   />
                 ))
               )}

@@ -17,6 +17,9 @@ export const HomeView: React.FC<HomeViewProps> = ({ filterMood, onChips, account
   const [loadingMore, setLoadingMore] = useState(false);
   const [openingCard, setOpeningCard] = useState<string | null>(null);
   const { playTrack, currentTrack, isPlaying, history } = usePlayer();
+  const loggedIn = !!accountKey && accountKey !== 'guest';
+  // logged in: "Zuletzt gehört" comes from the Google account (YouTube Music history), not the phone
+  const [accountHistory, setAccountHistory] = useState<Track[]>([]);
   const chipParamsRef = useRef<Record<string, string>>({});
   const loadTokenRef = useRef(0);
 
@@ -99,13 +102,32 @@ export const HomeView: React.FC<HomeViewProps> = ({ filterMood, onChips, account
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterMood, accountKey]);
 
-  // logged in: YouTube's own "Wieder reinhören" replaces the local history row
-  const hasYtListenAgain = shelves.some((s) => /wieder reinhören|listen again/i.test(`${s.title} ${s.subtitle || ''}`));
+  useEffect(() => {
+    if (!loggedIn || filterMood) return;
+    let alive = true;
+    api
+      .getUserHistory()
+      .then((h) => alive && setAccountHistory(h))
+      .catch(() => alive && setAccountHistory([]));
+    return () => {
+      alive = false;
+    };
+  }, [loggedIn, accountKey, filterMood]);
+
+  const recent = loggedIn ? accountHistory : history;
+
+  // YouTube's own "Wieder reinhören" shelf already shows recent plays -> no second row
+  const recentIds = new Set(recent.slice(0, 20).map((t) => t.id));
+  const hasYtListenAgain = shelves.some((s) => {
+    if (/wieder|nochmal|noch einmal|erneut|zuletzt|kürzlich|listen again|recently/i.test(s.title || '')) return true;
+    const ids: string[] = (s.tracks || s.items || []).map((x: any) => x.videoId || x.id).filter(Boolean);
+    return ids.length > 0 && ids.filter((id) => recentIds.has(id)).length >= Math.min(4, ids.length);
+  });
 
   return (
     <div className="pb-36 space-y-7 pt-2 select-none">
       {/* Zuletzt gehört (Listen Again) from History if available */}
-      {history.length > 0 && !filterMood && !hasYtListenAgain && (
+      {!loading && recent.length > 0 && !filterMood && !hasYtListenAgain && (
         <section className="px-4">
           <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-400 mb-1">
             WIEDER REINHÖREN
@@ -114,12 +136,12 @@ export const HomeView: React.FC<HomeViewProps> = ({ filterMood, onChips, account
             Zuletzt gehört
           </h2>
           <div className="flex space-x-3 overflow-x-auto pb-2 scrollbar-none -mx-4 px-4">
-            {history.slice(0, 8).map((track) => {
+            {recent.slice(0, 8).map((track) => {
               const isCurrent = currentTrack?.id === track.id;
               return (
                 <div
                   key={track.id}
-                  onClick={() => playTrack(track, history)}
+                  onClick={() => playTrack(track, recent)}
                   className="w-32 flex-shrink-0 cursor-pointer group active:scale-95 transition"
                 >
                   <div className="relative aspect-square rounded-xl overflow-hidden bg-zinc-900 shadow-md mb-2">
