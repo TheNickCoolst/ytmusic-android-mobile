@@ -284,7 +284,7 @@ const b64ToBytes = (b64: string): Uint8Array => {
   return out;
 };
 
-const fetchBytes = async (url: string): Promise<Uint8Array> => {
+export const fetchBytes = async (url: string): Promise<Uint8Array> => {
   if (isNativeApp()) {
     const res = await CapacitorHttp.request({
       url,

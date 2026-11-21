@@ -293,6 +293,8 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const makeDeck = () => {
     const audio = new Audio();
     audio.preload = 'auto';
+    // iOS ManagedMediaSource (stream while downloading) only opens with AirPlay-remote off
+    (audio as any).disableRemotePlayback = true;
     audio.setAttribute('playsinline', 'true');
     (audio as any).playsInline = true;
     // tempo matching must not change the pitch
@@ -1133,7 +1135,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const t = setTimeout(() => {
       if (isNativeApp()) {
         // warm the direct YouTube URL cache
-        api.resolvePlaybackUrl(nextPrefetchId).catch(() => {});
+        api.prefetchPlayback(nextPrefetchId).catch(() => {});
       } else if (!isServerMarkedDown()) {
         fetch(api.getStreamUrl(nextPrefetchId), { method: 'HEAD' }).catch(() => {});
       }

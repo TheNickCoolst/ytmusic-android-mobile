@@ -1,4 +1,4 @@
-name: App updates (self-update bundle + iPhone app)
+name: App updates (self-update bundle + Android + iPhone app)
 
 on:
   workflow_dispatch:
@@ -58,6 +58,50 @@ jobs:
           # keep only the 3 newest bundles
           gh release view web-latest --json assets --jq '.assets[].name' | grep '^web-[0-9]*\.zip$' \
             | sort -t- -k2 -n | head -n -3 | while read -r old; do gh release delete-asset web-latest "$old" -y; done
+
+  # Android APK, built at the same time as the iPhone app. Signed with the same debug key as the
+  # installed app (secret ANDROID_DEBUG_KEYSTORE), so the in-app updater can install it over it.
+  android:
+    runs-on: ubuntu-latest
+    env:
+      APP_VERSION_BASE: '1.8'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: oven-sh/setup-bun@v2
+      - name: Build web app + sync Android
+        working-directory: frontend
+        run: |
+          echo "WEB_BUILD=$(git rev-list --count HEAD)" >> "$GITHUB_ENV"
+          bun install --frozen-lockfile
+          WEB_BUILD=$(git rev-list --count HEAD) bun run build
+          npx cap sync android
+      - name: Build APK
+        working-directory: frontend/android
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_DEBUG_KEYSTORE }}
+        run: |
+          test -n "$KEYSTORE_B64" || { echo "secret ANDROID_DEBUG_KEYSTORE missing"; exit 1; }
+          mkdir -p ~/.android && echo "$KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon -q \
+            -PappVersionCode=${WEB_BUILD} -PappVersionName=${APP_VERSION_BASE}.${WEB_BUILD}
+          cp app/build/outputs/apk/debug/app-debug.apk ../../ytmusic-mobile.apk
+      - name: Publish as latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v${APP_VERSION_BASE}.${WEB_BUILD}"
+          gh release create "$TAG" ytmusic-mobile.apk --latest --target "$GITHUB_SHA" \
+            --title "$TAG – $(git log -1 --pretty=%s)" --notes "Automatisch gebaut. Die App installiert das Update selbst."
+          # keep only the 3 newest automatic releases (patch = build number, >= 2 digits)
+          gh release list --limit 100 --json tagName --jq '.[].tagName' | grep -E "^v${APP_VERSION_BASE//./\\.}\.[0-9]{2,}$" \
+            | sort -t. -k3 -n | head -n -3 | while read -r old; do gh release delete "$old" -y --cleanup-tag; done
 
   # Unsigned iPhone app + SideStore/AltStore source (store-like install & auto-refresh)
   ios:

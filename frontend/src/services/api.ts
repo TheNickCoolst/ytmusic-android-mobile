@@ -1,6 +1,48 @@
 import { Track, MoodCategory, LyricsResponse } from '../types';
 import * as yt from './youtube';
 import * as offline from './offline';
+import { Capacitor } from '@capacitor/core';
+import { canStreamIos, iosStreamUrl } from './iosStream';
+
+// iOS WebKit loads a googlevideo URL in <audio> (duration shows) but never plays it, so on the
+// iPhone the song is fetched via native HTTP and played from memory. A few are kept (current,
+// prefetched next, previous); older ones are released.
+const IOS_KEEP = 4;
+const iosBlobs = new Map<string, Promise<string>>();
+const isIos = () => {
+  try {
+    return Capacitor.getPlatform() === 'ios';
+  } catch {
+    return false;
+  }
+};
+const dropIosBlob = (id: string) => {
+  const p = iosBlobs.get(id);
+  iosBlobs.delete(id);
+  p?.then((u) => URL.revokeObjectURL(u)).catch(() => {});
+};
+const iosBlobUrl = (id: string, fresh: boolean): Promise<string> => {
+  if (fresh) {
+    dropIosBlob(id);
+    yt.forgetAudioUrl(id);
+  }
+  const known = iosBlobs.get(id);
+  if (known) {
+    iosBlobs.delete(id); // move to newest
+    iosBlobs.set(id, known);
+    return known;
+  }
+  const p = (async () => {
+    const { downloadAudio } = await import('./dj');
+    const { bytes, mime } = await downloadAudio(id, true);
+    if (bytes.length < 10_000) throw new Error('Audiodatei unvollständig');
+    return URL.createObjectURL(new Blob([bytes], { type: mime.split(';')[0] || 'audio/mp4' }));
+  })();
+  iosBlobs.set(id, p);
+  p.catch(() => iosBlobs.get(id) === p && iosBlobs.delete(id));
+  while (iosBlobs.size > IOS_KEEP) dropIosBlob(iosBlobs.keys().next().value as string);
+  return p;
+};
 
 // ---- Mac server reachability (the app works without it in the native APK) ----
 let serverDownUntil = 0;
@@ -357,6 +399,23 @@ export const api = {
       const local = await offline.getOfflineUrl(videoId);
       if (local) return { url: local, direct: true };
     }
+    if (yt.isNativeApp() && isIos()) {
+      // stream while downloading; whole-file download only if MediaSource is unavailable
+      if (canStreamIos()) {
+        if (fresh) yt.forgetAudioUrl(videoId);
+        try {
+          return { url: await iosStreamUrl(videoId), direct: true };
+        } catch (e) {
+          console.warn('iOS streaming unavailable, downloading instead:', e);
+        }
+      }
+      try {
+        return { url: await iosBlobUrl(videoId, fresh), direct: true };
+      } catch (e) {
+        console.warn('iOS audio download failed, retrying:', e);
+        return { url: await iosBlobUrl(videoId, true), direct: true };
+      }
+    }
     if (yt.isNativeApp()) {
       if (fresh) yt.forgetAudioUrl(videoId);
       try {
@@ -368,6 +427,16 @@ export const api = {
       }
     }
     return { url: this.getStreamUrl(videoId), direct: false };
+  },
+
+  /** Warm up the next song: only the stream URL (a MediaSource can't be prepared unattached). */
+  async prefetchPlayback(videoId: string): Promise<void> {
+    if (offline.isOffline(videoId)) return;
+    if (yt.isNativeApp() && isIos() && canStreamIos()) {
+      await yt.getDirectAudioUrl(videoId);
+      return;
+    }
+    await this.resolvePlaybackUrl(videoId);
   },
 
   getStreamUrl(videoId: string): string {
