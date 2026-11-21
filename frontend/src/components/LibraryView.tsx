@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { usePlayer } from '../context/PlayerContext';
 import { TrackItem } from './TrackItem';
+import { PlayAllBar } from './PlayAllBar';
 import { api, UserProfile } from '../services/api';
 import { Track, Playlist } from '../types';
 
@@ -364,14 +365,17 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ userProfile, onOpenAut
                   Noch keine Lieblingslieder vorhanden. Klicke auf das Herz bei einem Song!
                 </div>
               ) : (
-                displayLiked.map((track, i) => (
+                <>
+                <PlayAllBar tracks={displayLiked} />
+                {displayLiked.map((track, i) => (
                   <TrackItem
                     key={`${track.id}-${i}`}
                     track={track}
                     index={i + 1}
                     playlistContext={displayLiked}
                   />
-                ))
+                ))}
+                </>
               )}
             </div>
           )}
@@ -490,6 +494,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ userProfile, onOpenAut
                 {cacheInfo.count > 0 && (
                   <button
                     onClick={async () => {
+                      if (!window.confirm(`Alle ${cacheInfo.count} Offline-Titel löschen?`)) return;
                       for (const t of cacheInfo.tracks) {
                         await api.deleteFromCache(t.id);
                       }
@@ -508,6 +513,15 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ userProfile, onOpenAut
                 </div>
               ) : (
                 <div className="space-y-1">
+                  <PlayAllBar
+                    tracks={cacheInfo.tracks.map((t) => ({
+                      id: t.id,
+                      title: t.title || `Offline Track (${t.id})`,
+                      artist: t.artist || 'Offline Audio',
+                      thumbnail: t.thumbnail || `https://i.ytimg.com/vi/${t.id}/hqdefault.jpg`,
+                      duration: t.duration || '3:30',
+                    }))}
+                  />
                   {cacheInfo.tracks.map((ct) => (
                     <div
                       key={ct.id}
@@ -564,14 +578,17 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ userProfile, onOpenAut
                   Noch kein Verlauf vorhanden.
                 </div>
               ) : (
-                displayHistory.map((track, i) => (
+                <>
+                <PlayAllBar tracks={displayHistory} />
+                {displayHistory.map((track, i) => (
                   <TrackItem
                     key={`${track.id}-${i}`}
                     track={track}
                     index={i + 1}
                     playlistContext={displayHistory}
                   />
-                ))
+                ))}
+                </>
               )}
             </div>
           )}

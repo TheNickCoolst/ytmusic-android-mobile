@@ -13,9 +13,17 @@ import { api, UserProfile } from './services/api';
 import { initUpdater, applyUpdate, UpdateStatus, currentWebBuild, installDownloadedApk } from './services/updater';
 import { googleAuthService } from './services/googleAuth';
 import { Capacitor } from '@capacitor/core';
+import { Toaster } from './components/Toaster';
+import { useBackClose, useOnline } from './services/ui';
 
 const PlaybackErrorBanner: React.FC = () => {
   const { playbackError, clearPlaybackError } = usePlayer();
+  useEffect(() => {
+    if (!playbackError) return;
+    const t = setTimeout(clearPlaybackError, 8000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playbackError]);
   if (!playbackError) return null;
   return (
     <div
@@ -107,7 +115,20 @@ const UpdateBanner: React.FC<{ status: UpdateStatus | null; onClose: () => void;
   );
 };
 
+const OfflineBanner: React.FC = () => {
+  const online = useOnline();
+  if (online) return null;
+  return (
+    <div className="mx-3 mb-2 rounded-xl bg-zinc-800/95 px-4 py-2.5 text-xs text-zinc-200 shadow-lg">
+      📴 Keine Internetverbindung – Offline-Songs findest du in der Mediathek.
+    </div>
+  );
+};
+
+const TAB_KEY = 'ytmusic_last_tab';
+
 const AppContent: React.FC = () => {
+  const { isPlayerExpanded, setIsPlayerExpanded, togglePlay, nextTrack, previousTrack } = usePlayer();
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   useEffect(() => {
     (window as any).__webBuild = currentWebBuild();
@@ -127,7 +148,15 @@ const AppContent: React.FC = () => {
     return () => document.removeEventListener('visibilitychange', onVis);
   }, []);
 
-  const [activeTab, setActiveTab] = useState<NavTab>('home');
+  const [activeTab, setActiveTab] = useState<NavTab>(() => {
+    try {
+      const t = localStorage.getItem(TAB_KEY) as NavTab | null;
+      return t === 'home' || t === 'explore' || t === 'library' ? t : 'home';
+    } catch {
+      return 'home';
+    }
+  });
+  const mainRef = useRef<HTMLElement>(null);
   const [activeMoodFilter, setActiveMoodFilter] = useState<string | null>(null);
   const [moodChips, setMoodChips] = useState<string[] | null>(null);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -162,9 +191,42 @@ const AppContent: React.FC = () => {
   };
 
   const handleTabChange = (tab: NavTab) => {
+    if (tab === activeTab && !isSearchOpen) {
+      // tap on the active tab = back to the top
+      mainRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
     setActiveTab(tab);
     setIsSearchOpen(false);
+    if (mainRef.current) mainRef.current.scrollTop = 0;
+    try {
+      localStorage.setItem(TAB_KEY, tab);
+    } catch {
+      /* ignore */
+    }
   };
+
+  // Android back button closes the open screen instead of leaving the app
+  useBackClose(isSearchOpen, () => setIsSearchOpen(false));
+  useBackClose(isPlayerExpanded, () => setIsPlayerExpanded(false));
+  useBackClose(isAuthOpen, () => setIsAuthOpen(false));
+
+  // keyboard (browser / tablet with keyboard): space = play/pause, shift+arrows = skip
+  const keysRef = useRef({ togglePlay, nextTrack, previousTrack });
+  keysRef.current = { togglePlay, nextTrack, previousTrack };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+      if (e.code === 'Space') {
+        e.preventDefault();
+        keysRef.current.togglePlay();
+      } else if (e.shiftKey && e.key === 'ArrowRight') keysRef.current.nextTrack();
+      else if (e.shiftKey && e.key === 'ArrowLeft') keysRef.current.previousTrack();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   return (
     <div className="flex flex-col h-screen w-full bg-[#030303] text-white overflow-hidden select-none font-sans">
@@ -179,7 +241,7 @@ const AppContent: React.FC = () => {
       />
 
       {/* Main View Area */}
-      <main className="flex-1 overflow-y-auto overscroll-contain">
+      <main ref={mainRef} className="flex-1 overflow-y-auto overscroll-contain">
         {isSearchOpen ? (
           <div className="relative">
             <div className="flex items-center justify-between px-4 pt-2">
@@ -215,7 +277,9 @@ const AppContent: React.FC = () => {
 
       {/* Banners float above mini player + navigation */}
       <div className="fixed left-0 right-0 z-[45] bottom-[calc(56px+max(var(--sab),8px)+76px)] pointer-events-none">
+        <Toaster />
         <div className="pointer-events-auto">
+          <OfflineBanner />
           <PlaybackErrorBanner />
           <UpdateBanner status={updateStatus} onClose={() => setUpdateStatus(null)} onStatus={setUpdateStatus} />
         </div>

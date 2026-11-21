@@ -19,6 +19,18 @@ export interface DjStatus {
 const safeSet = (k: string, v: string) => {
   try { localStorage.setItem(k, v); } catch { /* storage unavailable */ }
 };
+const loadJson = <T,>(k: string, fallback: T): T => {
+  try {
+    const v = localStorage.getItem(k);
+    return v === null ? fallback : (JSON.parse(v) as T);
+  } catch {
+    return fallback;
+  }
+};
+const SETTINGS_KEY = 'ytmusic_player_settings';
+const SESSION_KEY = 'ytmusic_last_session';
+type SavedSettings = { shuffle?: boolean; repeatMode?: RepeatMode; autoPlayRadio?: boolean; volume?: number };
+type SavedSession = { track: Track; queue: Track[]; index: number; pos: number };
 
 interface PlayerContextType {
   currentTrack: Track | null;
@@ -77,6 +89,7 @@ interface PlayerContextType {
   toggleShuffle: () => void;
   cycleRepeatMode: () => void;
   addToQueue: (track: Track) => void;
+  playNext: (track: Track) => void;
   removeFromQueue: (index: number) => void;
   clearQueue: () => void;
   setAutoPlayRadio: (enabled: boolean) => void;
@@ -94,6 +107,8 @@ interface PlayerContextType {
 
   // Sleep timer
   setSleepTimer: (minutes: number | null) => void;
+  sleepAtTrackEnd: boolean;
+  setSleepAtTrackEnd: (on: boolean) => void;
 }
 
 const PlayerContext = createContext<PlayerContextType | null>(null);
@@ -126,13 +141,14 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [isBuffering, setIsBuffering] = useState<boolean>(false);
   const [duration, setDuration] = useState<number>(0);
-  const [volume, setVolumeState] = useState<number>(1);
+  const saved0 = useRef<SavedSettings>(loadJson<SavedSettings>(SETTINGS_KEY, {})).current;
+  const [volume, setVolumeState] = useState<number>(typeof saved0.volume === 'number' ? saved0.volume : 1);
   const [isMuted, setIsMuted] = useState<boolean>(false);
-  const [shuffle, setShuffle] = useState<boolean>(false);
-  const [repeatMode, setRepeatMode] = useState<RepeatMode>('off');
+  const [shuffle, setShuffle] = useState<boolean>(!!saved0.shuffle);
+  const [repeatMode, setRepeatMode] = useState<RepeatMode>(saved0.repeatMode || 'off');
   const [queue, setQueue] = useState<Track[]>([]);
   const [queueIndex, setQueueIndex] = useState<number>(-1);
-  const [autoPlayRadio, setAutoPlayRadio] = useState<boolean>(true);
+  const [autoPlayRadio, setAutoPlayRadio] = useState<boolean>(saved0.autoPlayRadio ?? true);
   const [isPlayerExpanded, setIsPlayerExpanded] = useState<boolean>(false);
   const [isVideoMode, setIsVideoMode] = useState<boolean>(false);
   const [audioQuality, setAudioQuality] = useState<'high' | 'normal'>('high');
@@ -204,6 +220,13 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   // Sleep timer
   const [sleepTimerRemaining, setSleepTimerRemaining] = useState<number | null>(null);
+  const [sleepAtTrackEnd, setSleepAtTrackEndState] = useState(false);
+  const sleepEndRef = useRef(false);
+  const setSleepAtTrackEnd = (on: boolean) => {
+    sleepEndRef.current = on;
+    setSleepAtTrackEndState(on);
+    if (on) setSleepTimerRemaining(null);
+  };
   const sleepTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -213,6 +236,8 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const currentTrackIdRef = useRef<string | null>(null);
   const directSrcRef = useRef<boolean>(false);
   const handleTrackEndRef = useRef<() => void>(() => {});
+  const backStackRef = useRef<string[]>([]);
+  const goingBackRef = useRef(false);
   const bassFilterRef = useRef<BiquadFilterNode | null>(null);
   const midFilterRef = useRef<BiquadFilterNode | null>(null);
   const trebleFilterRef = useRef<BiquadFilterNode | null>(null);
@@ -258,7 +283,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const djTokenRef = useRef(0);
   const djTickRef = useRef<() => void>(() => {});
   const glideRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const volumeRef = useRef(1);
+  const volumeRef = useRef(volume);
   const mutedRef = useRef(false);
   const playbackRateRef = useRef(1);
   // learned start latency of play() on this device (s), separately for app visible / in background
@@ -506,6 +531,54 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     safeSet(STORAGE_KEYS.HISTORY, JSON.stringify(history));
   }, [history]);
 
+  useEffect(() => {
+    safeSet(SETTINGS_KEY, JSON.stringify({ shuffle, repeatMode, autoPlayRadio, volume }));
+  }, [shuffle, repeatMode, autoPlayRadio, volume]);
+
+  // ---- last session: the song (queue + position) is back after an app restart, paused ----
+  const resumePosRef = useRef<{ id: string; pos: number } | null>(null);
+  const restoredRef = useRef(false);
+  useEffect(() => {
+    if (restoredRef.current) return;
+    restoredRef.current = true;
+    const s = loadJson<SavedSession | null>(SESSION_KEY, null);
+    if (!s?.track?.id || currentTrack) return;
+    const q = Array.isArray(s.queue) && s.queue.length ? s.queue : [s.track];
+    setCurrentTrack(s.track);
+    setQueue(q);
+    setQueueIndex(Math.max(0, q.findIndex((t) => t.id === s.track.id)));
+    if (s.track.durationSeconds) setDuration(s.track.durationSeconds);
+    setCurrentTime(s.pos || 0);
+    resumePosRef.current = { id: s.track.id, pos: s.pos || 0 };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const sessionRef = useRef<() => void>(() => {});
+  sessionRef.current = () => {
+    if (!currentTrack) return;
+    const a = audioRef.current;
+    const pos = a && a.getAttribute('src') ? a.currentTime : resumePosRef.current?.pos || 0;
+    const start = Math.max(0, queueIndex - 50);
+    safeSet(
+      SESSION_KEY,
+      JSON.stringify({ track: currentTrack, queue: queue.slice(start, start + 200), index: queueIndex - start, pos })
+    );
+  };
+  useEffect(() => {
+    sessionRef.current();
+  }, [currentTrack?.id, queue, queueIndex, isPlaying]);
+  useEffect(() => {
+    const save = () => sessionRef.current();
+    const iv = setInterval(save, 15000);
+    const onVis = () => document.visibilityState === 'hidden' && save();
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('pagehide', save);
+    return () => {
+      clearInterval(iv);
+      document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('pagehide', save);
+    };
+  }, []);
+
   // Sleep timer interval
   useEffect(() => {
     if (sleepTimerRemaining === null) {
@@ -521,10 +594,14 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     sleepTimerRef.current = setInterval(() => {
       setSleepTimerRemaining((prev) => {
+        const a = audioRef.current;
         if (prev === null || prev <= 1) {
           pause();
+          if (a) a.volume = volumeRef.current; // undo the fade for the next play
           return null;
         }
+        // gentle fade-out over the last 10 seconds
+        if (a && prev <= 11 && !djTransRef.current) a.volume = volumeRef.current * Math.max(0, (prev - 1) / 10);
         return prev - 1;
       });
     }, 1000);
@@ -607,6 +684,10 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     abortDj();
     retryRef.current = 0;
     setPlaybackError(null);
+    // remember where we came from (Zurück in shuffle mode goes to the song played before)
+    const prevId = currentTrackIdRef.current;
+    if (goingBackRef.current) goingBackRef.current = false;
+    else if (prevId && prevId !== track.id) backStackRef.current = [...backStackRef.current.slice(-49), prevId];
     setCurrentTrack(track);
     setIsBuffering(true);
     setCurrentTime(0);
@@ -659,6 +740,18 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     audioRef.current.src = streamUrl;
     audioRef.current.playbackRate = playbackRateRef.current;
+    const resumeAt = resumePosRef.current?.id === track.id ? resumePosRef.current.pos : 0;
+    resumePosRef.current = null;
+    if (resumeAt > 3) {
+      const a = audioRef.current;
+      a.addEventListener(
+        'loadedmetadata',
+        () => {
+          if (token === playTokenRef.current && (!a.duration || resumeAt < a.duration - 5)) a.currentTime = resumeAt;
+        },
+        { once: true }
+      );
+    }
 
     audioRef.current.volume = volume;
     audioRef.current.muted = isMuted;
@@ -689,6 +782,12 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const handleTrackEnd = async () => {
+    if (sleepEndRef.current) {
+      // sleep timer "Ende des Titels"
+      setSleepAtTrackEnd(false);
+      setIsPlaying(false);
+      return;
+    }
     if (repeatMode === 'one' && audioRef.current) {
       audioRef.current.currentTime = 0;
       audioRef.current.play();
@@ -999,6 +1098,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   // called on every timeupdate of the active deck
   djTickRef.current = () => {
+    if (sleepEndRef.current) return; // stop after this song: no mix into the next one
     const P = djPlanRef.current;
     const A = audioRef.current;
     if (!djModeRef.current || !P || djTransRef.current || !A || A.paused) return;
@@ -1035,7 +1135,9 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (c && c.forId === currentTrack.id && c.idx !== queueIndex && queue[c.idx]) return c.idx;
     const played = shufflePlayedRef.current;
     played.add(currentTrack.id);
-    const others = queue.map((_, i) => i).filter((i) => i !== queueIndex && queue[i].id !== currentTrack.id);
+    const others = queue
+      .map((_, i) => i)
+      .filter((i) => i !== queueIndex && queue[i].id !== currentTrack.id && !dislikedTrackIds.includes(queue[i].id));
     let pool = others.filter((i) => !played.has(queue[i].id));
     if (!pool.length && cycle) {
       played.clear();
@@ -1206,6 +1308,11 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const resume = () => {
+    if (audioRef.current && currentTrack && !audioRef.current.getAttribute('src')) {
+      // restored session: nothing loaded yet
+      playTrack(currentTrack, queue.length ? queue : undefined);
+      return;
+    }
     if (audioRef.current && currentTrack) {
       const ctx = audioContextRef.current;
       if (ctx && ctx.state !== 'running') ctx.resume().catch(() => {});
@@ -1245,6 +1352,19 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       return;
     }
 
+    if (shuffle) {
+      while (backStackRef.current.length) {
+        const id = backStackRef.current[backStackRef.current.length - 1];
+        backStackRef.current = backStackRef.current.slice(0, -1);
+        const i = queue.findIndex((t) => t.id === id);
+        if (i >= 0) {
+          goingBackRef.current = true;
+          setQueueIndex(i);
+          playTrack(queue[i], queue);
+          return;
+        }
+      }
+    }
     let prevIdx = queueIndex - 1;
     if (prevIdx < 0) {
       prevIdx = repeatMode === 'all' ? queue.length - 1 : 0;
@@ -1334,6 +1454,21 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const addToQueue = (track: Track) => {
     setQueue((prev) => [...prev, track]);
+  };
+
+  /** Insert right after the current song ("Als Nächstes abspielen"). */
+  const playNext = (track: Track) => {
+    if (!currentTrack) {
+      playTrack(track);
+      return;
+    }
+    if (track.id === currentTrack.id) return;
+    const rest = queue.filter((t, i) => i <= queueIndex || t.id !== track.id);
+    const at = Math.max(0, rest.findIndex((t) => t.id === currentTrack.id)) + 1;
+    setQueue([...rest.slice(0, at), track, ...rest.slice(at)]);
+    setQueueIndex(at - 1);
+    // shuffle: the inserted song really comes next
+    shuffleNextRef.current = { forId: currentTrack.id, idx: at };
   };
 
   const removeFromQueue = (index: number) => {
@@ -1430,6 +1565,9 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const setSleepTimer = (minutes: number | null) => {
+    if (audioRef.current && !djTransRef.current) audioRef.current.volume = volumeRef.current;
+    sleepEndRef.current = false;
+    setSleepAtTrackEndState(false);
     if (minutes === null) {
       setSleepTimerRemaining(null);
     } else {
@@ -1503,6 +1641,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         toggleShuffle,
         cycleRepeatMode,
         addToQueue,
+        playNext,
         removeFromQueue,
         clearQueue,
         setAutoPlayRadio,
@@ -1516,6 +1655,8 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         removeFromPlaylist,
         deletePlaylist,
         setSleepTimer,
+        sleepAtTrackEnd,
+        setSleepAtTrackEnd,
       }}
     >
       {children}

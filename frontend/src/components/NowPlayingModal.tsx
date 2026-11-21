@@ -9,6 +9,7 @@ import {
   Repeat,
   Repeat1,
   ThumbsUp,
+  Heart,
   ThumbsDown,
   Share2,
   Download,
@@ -34,6 +35,7 @@ import {
 import { usePlayer, usePlaybackTime } from '../context/PlayerContext';
 import { api } from '../services/api';
 import { EqualizerPreset } from '../types';
+import { tap } from '../services/ui';
 
 interface LyricLine {
   time: number;
@@ -88,6 +90,8 @@ export const NowPlayingModal: React.FC = () => {
     isDisliked,
     sleepTimerRemaining,
     setSleepTimer,
+    sleepAtTrackEnd,
+    setSleepAtTrackEnd,
     playTrack,
     isVideoMode,
     setIsVideoMode,
@@ -117,6 +121,13 @@ export const NowPlayingModal: React.FC = () => {
   const [lyricsSource, setLyricsSource] = useState<string | null>(null);
   const [loadingLyrics, setLoadingLyrics] = useState(false);
   const [showSleepMenu, setShowSleepMenu] = useState(false);
+  const lastCoverTapRef = useRef(0);
+  const [heartPop, setHeartPop] = useState(0);
+  useEffect(() => {
+    if (!heartPop) return;
+    const t = setTimeout(() => setHeartPop(0), 700);
+    return () => clearTimeout(t);
+  }, [heartPop]);
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [scrubValue, setScrubValue] = useState(0);
   const [downloaded, setDownloaded] = useState(false);
@@ -182,6 +193,19 @@ export const NowPlayingModal: React.FC = () => {
   }, [activeLyricIndex, activeTab, isSynced]);
 
   if (!isPlayerExpanded || !currentTrack) return null;
+
+  // double tap on the cover = like (with a heart pop)
+  const onCoverTap = () => {
+    const now = Date.now();
+    if (now - lastCoverTapRef.current < 320) {
+      lastCoverTapRef.current = 0;
+      if (!isLiked(currentTrack.id)) toggleLike(currentTrack);
+      tap(15);
+      setHeartPop(Date.now());
+    } else {
+      lastCoverTapRef.current = now;
+    }
+  };
 
   const liked = isLiked(currentTrack.id);
   const disliked = isDisliked(currentTrack.id);
@@ -407,7 +431,7 @@ export const NowPlayingModal: React.FC = () => {
           <button
             onClick={() => setShowSleepMenu(!showSleepMenu)}
             className={`p-2 rounded-full active:scale-90 transition ${
-              sleepTimerRemaining ? 'bg-red-600 text-white' : 'text-zinc-300 hover:text-white'
+              sleepTimerRemaining || sleepAtTrackEnd ? 'bg-red-600 text-white' : 'text-zinc-300 hover:text-white'
             }`}
             title="Schlaf-Timer"
           >
@@ -421,7 +445,7 @@ export const NowPlayingModal: React.FC = () => {
             <div className="fixed inset-0 z-40" onClick={() => setShowSleepMenu(false)} />
             <div className="absolute right-4 top-14 z-50 w-52 bg-[#1c1c1c] border border-white/10 rounded-2xl shadow-2xl p-2 backdrop-blur-xl">
               <div className="text-xs font-semibold px-3 py-1.5 text-zinc-400 border-b border-white/5">
-                Schlaf-Timer {sleepTimerRemaining ? `(${Math.ceil(sleepTimerRemaining / 60)}m)` : ''}
+                Schlaf-Timer {sleepTimerRemaining ? `(${Math.ceil(sleepTimerRemaining / 60)}m)` : sleepAtTrackEnd ? '(Titelende)' : ''}
               </div>
               {[15, 30, 45, 60].map((mins) => (
                 <button
@@ -438,7 +462,17 @@ export const NowPlayingModal: React.FC = () => {
                   )}
                 </button>
               ))}
-              {sleepTimerRemaining && (
+              <button
+                onClick={() => {
+                  setSleepAtTrackEnd(!sleepAtTrackEnd);
+                  setShowSleepMenu(false);
+                }}
+                className="w-full text-left px-3 py-2 text-xs text-zinc-200 hover:bg-white/10 rounded-lg flex items-center justify-between"
+              >
+                <span>Ende des Titels</span>
+                {sleepAtTrackEnd && <Check className="w-4 h-4 text-red-500" />}
+              </button>
+              {(sleepTimerRemaining || sleepAtTrackEnd) && (
                 <button
                   onClick={() => {
                     setSleepTimer(null);
@@ -472,7 +506,15 @@ export const NowPlayingModal: React.FC = () => {
           ) : (
             /* Album Artwork with Soft Shadow & Audio Visualizer */
             <div className="w-full h-full relative flex flex-col justify-center">
-              <div className="w-full h-full rounded-2xl overflow-hidden shadow-2xl shadow-black/90 bg-zinc-900 border border-white/10">
+              <div
+                onClick={onCoverTap}
+                className="relative w-full h-full rounded-2xl overflow-hidden shadow-2xl shadow-black/90 bg-zinc-900 border border-white/10"
+              >
+                {heartPop > 0 && (
+                  <div key={heartPop} className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none animate-ping">
+                    <Heart className="w-24 h-24 text-white fill-red-500 drop-shadow-2xl" />
+                  </div>
+                )}
                 <img
                   src={currentTrack.thumbnail}
                   alt={currentTrack.title}

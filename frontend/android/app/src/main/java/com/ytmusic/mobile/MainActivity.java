@@ -6,6 +6,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
+import androidx.activity.OnBackPressedCallback;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
@@ -38,5 +39,23 @@ public class MainActivity extends BridgeActivity {
         } catch (Exception e) {
             // Safe fallback if bridge is loading
         }
+
+        // Back button: the web app closes its open screen (player, search, ...) if there is one.
+        // On the start screen the app goes to the background instead of closing, so music keeps playing.
+        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+            @Override
+            public void handleOnBackPressed() {
+                WebView wv = getBridge() != null ? getBridge().getWebView() : null;
+                if (wv == null) {
+                    moveTaskToBack(true);
+                    return;
+                }
+                wv.evaluateJavascript(
+                    "(window.__handleBack && window.__handleBack()) ? '1' : '0'",
+                    result -> {
+                        if (result == null || !result.contains("1")) moveTaskToBack(true);
+                    });
+            }
+        });
     }
 }

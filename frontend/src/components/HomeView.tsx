@@ -4,6 +4,7 @@ import { Track } from '../types';
 import { api } from '../services/api';
 import { isNativeApp, HomeCard } from '../services/youtube';
 import { usePlayer } from '../context/PlayerContext';
+import { greeting } from '../services/ui';
 
 // Weihnachtsplaylist: shown 1 Nov – 6 Jan, built from YouTube Music song searches
 const XMAS_QUERIES = ['Weihnachtslieder', 'Christmas Songs Klassiker', 'Deutsche Weihnachtslieder'];
@@ -166,6 +167,12 @@ export const HomeView: React.FC<HomeViewProps> = ({ filterMood, onChips, account
 
   return (
     <div className="pb-36 space-y-7 pt-2 select-none">
+      {!filterMood && (
+        <h1 className="px-4 pt-1 -mb-3 text-2xl font-black text-white tracking-tight">
+          {greeting()}
+          {loggedIn && accountKey ? `, ${accountKey.split(' ')[0]}` : ''} 👋
+        </h1>
+      )}
       {/* Zuletzt gehört (Listen Again) from History if available */}
       {!loading && recent.length > 0 && !filterMood && !hasYtListenAgain && (
         <section className="px-4">
