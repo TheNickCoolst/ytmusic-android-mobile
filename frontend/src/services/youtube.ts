@@ -11,6 +11,11 @@ export const isNativeApp = (): boolean => {
   }
 };
 
+/** Mac app (Mac Catalyst build of the iOS project). Capacitor reports 'ios' there too, but its
+ *  WebKit has no MediaSource and won't play in-memory blobs, while it plays googlevideo URLs
+ *  directly. The flag is set by the Mac app's native code (youtube_music/Catalyst/MacSupport.swift). */
+export const isMacApp = (): boolean => typeof window !== 'undefined' && (window as any).__ytMacApp === true;
+
 type HttpFn = (url: string, opts: { method: 'GET' | 'POST'; headers: Record<string, string>; body?: any }) => Promise<any>;
 
 // Native HTTP in the APK; plain fetch elsewhere (only useful outside a browser, e.g. tests)

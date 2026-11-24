@@ -9,9 +9,10 @@ import { canStreamIos, iosStreamUrl } from './iosStream';
 // prefetched next, previous); older ones are released.
 const IOS_KEEP = 4;
 const iosBlobs = new Map<string, Promise<string>>();
+// The Mac app reports 'ios' too but plays direct URLs, so it takes the Android path.
 const isIos = () => {
   try {
-    return Capacitor.getPlatform() === 'ios';
+    return Capacitor.getPlatform() === 'ios' && !yt.isMacApp();
   } catch {
     return false;
   }
@@ -404,7 +405,8 @@ export const api = {
   /** Best playable URL: offline copy, else in the app direct from YouTube, in the browser via the server.
    *  `fresh` (app) drops the cached YouTube URL, e.g. after a playback error. */
   async resolvePlaybackUrl(videoId: string, fresh = false): Promise<{ url: string; direct: boolean }> {
-    if (offline.isOffline(videoId)) {
+    // Mac app: its WebKit can't play blob: URLs, so downloaded songs are streamed there instead
+    if (offline.isOffline(videoId) && !yt.isMacApp()) {
       const local = await offline.getOfflineUrl(videoId);
       if (local) return { url: local, direct: true };
     }
