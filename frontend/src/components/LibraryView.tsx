@@ -14,10 +14,19 @@ import {
   Loader2,
   Play,
   X,
-  Music2
+  Music2,
+  Pencil,
+  Share2,
+  ChevronUp,
+  ChevronDown,
+  Search,
+  BarChart3,
 } from 'lucide-react';
+import { toast } from '../services/ui';
+import { topTracks, topArtists, totalPlays } from '../services/stats';
 import { usePlayer } from '../context/PlayerContext';
 import { TrackItem } from './TrackItem';
+import { PlayAllBar } from './PlayAllBar';
 import { api, UserProfile } from '../services/api';
 import { Track, Playlist } from '../types';
 
@@ -27,8 +36,24 @@ interface LibraryViewProps {
 }
 
 export const LibraryView: React.FC<LibraryViewProps> = ({ userProfile, onOpenAuth }) => {
-  const { likedTracks, history, playTrack, playlists, createPlaylist, deletePlaylist } = usePlayer();
-  const [activeTab, setActiveTab] = useState<'liked' | 'playlists' | 'downloads' | 'history'>('liked');
+  const {
+    likedTracks,
+    history,
+    playTrack,
+    playlists,
+    createPlaylist,
+    deletePlaylist,
+    renamePlaylist,
+    movePlaylistTrack,
+    removeFromPlaylist,
+    removeFromHistory,
+    clearHistory,
+  } = usePlayer();
+  const [activeTab, setActiveTab] = useState<'liked' | 'playlists' | 'downloads' | 'history' | 'stats'>('liked');
+  const [filterText, setFilterText] = useState('');
+  const [sortBy, setSortBy] = useState<'added' | 'title' | 'artist'>('added');
+  const [statsRange, setStatsRange] = useState<'week' | 'month' | 'all'>('week');
+  const [playlistDownload, setPlaylistDownload] = useState<{ done: number; total: number } | null>(null);
 
   // YouTube Account synced data
   const [ytLikedSongs, setYtLikedSongs] = useState<Track[]>([]);
@@ -47,7 +72,10 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ userProfile, onOpenAut
   const [newPlaylistDesc, setNewPlaylistDesc] = useState('');
 
   // Selected Local Playlist detail view
-  const [selectedLocalPlaylist, setSelectedLocalPlaylist] = useState<Playlist | null>(null);
+  // by id, so renames / reordering show up right away
+  const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
+  const selectedLocalPlaylist = playlists.find((p) => p.id === selectedPlaylistId) || null;
+  const setSelectedLocalPlaylist = (p: Playlist | null) => setSelectedPlaylistId(p?.id ?? null);
 
   // Load account data if logged in
   const loadAccountData = async () => {
@@ -85,9 +113,59 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ userProfile, onOpenAut
   }, [userProfile.isLoggedIn]);
 
   // Determine which liked tracks to show (YouTube account liked songs take priority if logged in, else local)
-  const displayLiked = userProfile.isLoggedIn && ytLikedSongs.length > 0 ? ytLikedSongs : likedTracks;
+  const q = filterText.trim().toLowerCase();
+  const matches = (t: Track) => !q || `${t.title} ${t.artist} ${t.album || ''}`.toLowerCase().includes(q);
+  const likedBase = userProfile.isLoggedIn && ytLikedSongs.length > 0 ? ytLikedSongs : likedTracks;
+  const displayLiked = (() => {
+    const list = likedBase.filter(matches);
+    if (sortBy === 'title') return [...list].sort((a, b) => a.title.localeCompare(b.title, 'de'));
+    if (sortBy === 'artist') return [...list].sort((a, b) => (a.artist || '').localeCompare(b.artist || '', 'de'));
+    return list;
+  })();
   // logged in: listening history of the Google account
-  const displayHistory = userProfile.isLoggedIn && ytHistory.length > 0 ? ytHistory : history;
+  const usingYtHistory = userProfile.isLoggedIn && ytHistory.length > 0;
+  const displayHistory = (usingYtHistory ? ytHistory : history).filter(matches);
+
+  const downloadPlaylist = async (tracks: Track[]) => {
+    if (playlistDownload) return;
+    const todo = tracks.filter((t) => !api.isDownloaded(t.id));
+    if (!todo.length) {
+      toast('Schon alles offline');
+      return;
+    }
+    setPlaylistDownload({ done: 0, total: todo.length });
+    let failed = 0;
+    for (let i = 0; i < todo.length; i++) {
+      const t = todo[i];
+      try {
+        await api.downloadTrack(t.id, { title: t.title, artist: t.artist, thumbnail: t.thumbnail, duration: t.duration });
+      } catch {
+        failed++;
+      }
+      setPlaylistDownload({ done: i + 1, total: todo.length });
+    }
+    setPlaylistDownload(null);
+    loadCacheInfo();
+    toast(failed ? `${todo.length - failed} geladen, ${failed} fehlgeschlagen` : `${todo.length} Songs offline gespeichert`, failed ? 'error' : 'info');
+  };
+
+  const sharePlaylist = async (pl: Playlist) => {
+    const text = `${pl.name}\n` + pl.tracks.map((t, i) => `${i + 1}. ${t.title} – ${t.artist}`).join('\n');
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: pl.name, text });
+        return;
+      }
+    } catch (e: any) {
+      if (e?.name === 'AbortError') return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      toast('Playlist als Text kopiert');
+    } catch {
+      toast('Teilen nicht möglich', 'error');
+    }
+  };
 
   const handleCreatePlaylist = (e: React.FormEvent) => {
     e.preventDefault();
@@ -197,6 +275,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ userProfile, onOpenAut
           { id: 'playlists', label: `Playlists (${ytPlaylists.length + playlists.length})`, icon: ListMusic },
           { id: 'downloads', label: `Offline (${cacheInfo.count})`, icon: Download },
           { id: 'history', label: `Verlauf (${displayHistory.length})`, icon: HistoryIcon },
+          { id: 'stats', label: 'Statistik', icon: BarChart3 },
         ].map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -219,6 +298,38 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ userProfile, onOpenAut
           );
         })}
       </div>
+
+      {/* Search + sort inside the library */}
+      {(activeTab === 'liked' || activeTab === 'history') && (
+        <div className="flex items-center gap-2">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500" />
+            <input
+              value={filterText}
+              onChange={(e) => setFilterText(e.target.value)}
+              placeholder="In der Mediathek suchen…"
+              className="w-full bg-white/5 border border-white/10 rounded-full pl-8 pr-8 py-1.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-red-500"
+            />
+            {filterText && (
+              <button aria-label="Filter leeren" onClick={() => setFilterText('')} className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-zinc-500">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+          {activeTab === 'liked' && (
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+              aria-label="Sortieren"
+              className="bg-white/5 border border-white/10 rounded-full px-2.5 py-1.5 text-xs text-zinc-200 focus:outline-none"
+            >
+              <option value="added">Zuletzt hinzugefügt</option>
+              <option value="title">Titel A–Z</option>
+              <option value="artist">Künstler A–Z</option>
+            </select>
+          )}
+        </div>
+      )}
 
       {/* Create Playlist Modal */}
       {showCreatePlaylistModal && (
@@ -293,10 +404,12 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ userProfile, onOpenAut
               <div className="w-12 h-12 rounded-xl bg-red-600/20 border border-red-500/30 flex items-center justify-center text-red-500">
                 <Music2 className="w-6 h-6" />
               </div>
-              <div>
-                <h3 className="text-base font-bold text-white">{selectedLocalPlaylist.name}</h3>
+              <div className="min-w-0">
+                <h3 className="text-base font-bold text-white truncate">{selectedLocalPlaylist.name}</h3>
                 <p className="text-xs text-zinc-400">
-                  {selectedLocalPlaylist.tracks.length} Titel • Eigene Playlist
+                  {playlistDownload
+                    ? `Lade offline … ${playlistDownload.done}/${playlistDownload.total}`
+                    : `${selectedLocalPlaylist.tracks.length} Titel • Eigene Playlist`}
                 </p>
               </div>
             </div>
@@ -312,9 +425,43 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ userProfile, onOpenAut
               )}
               <button
                 onClick={() => {
+                  const name = window.prompt('Neuer Name der Playlist', selectedLocalPlaylist.name);
+                  if (name && name.trim()) {
+                    renamePlaylist(selectedLocalPlaylist.id, name.trim());
+                    toast('Umbenannt');
+                  }
+                }}
+                className="p-2 text-zinc-400 hover:text-white rounded-full active:scale-90 transition"
+                aria-label="Umbenennen"
+              >
+                <Pencil className="w-4 h-4" />
+              </button>
+              {selectedLocalPlaylist.tracks.length > 0 && (
+                <button
+                  onClick={() => downloadPlaylist(selectedLocalPlaylist.tracks)}
+                  disabled={!!playlistDownload}
+                  className="p-2 text-zinc-400 hover:text-white rounded-full active:scale-90 transition disabled:opacity-40"
+                  aria-label="Ganze Playlist offline laden"
+                >
+                  {playlistDownload ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                </button>
+              )}
+              {selectedLocalPlaylist.tracks.length > 0 && (
+                <button
+                  onClick={() => sharePlaylist(selectedLocalPlaylist)}
+                  className="p-2 text-zinc-400 hover:text-white rounded-full active:scale-90 transition"
+                  aria-label="Playlist teilen"
+                >
+                  <Share2 className="w-4 h-4" />
+                </button>
+              )}
+              <button
+                onClick={() => {
+                  if (!window.confirm(`Playlist „${selectedLocalPlaylist.name}“ löschen?`)) return;
                   deletePlaylist(selectedLocalPlaylist.id);
                   setSelectedLocalPlaylist(null);
                 }}
+                aria-label="Playlist löschen"
                 className="p-2 text-zinc-400 hover:text-red-400 rounded-full active:scale-90 transition"
                 title="Playlist löschen"
               >
@@ -336,12 +483,39 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ userProfile, onOpenAut
           ) : (
             <div className="space-y-1">
               {selectedLocalPlaylist.tracks.map((track, i) => (
-                <TrackItem
-                  key={`${track.id}-${i}`}
-                  track={track}
-                  index={i + 1}
-                  playlistContext={selectedLocalPlaylist.tracks}
-                />
+                <div key={`${track.id}-${i}`} className="flex items-center">
+                  <div className="flex-1 min-w-0">
+                    <TrackItem track={track} index={i + 1} playlistContext={selectedLocalPlaylist.tracks} />
+                  </div>
+                  <div className="flex flex-col">
+                    <button
+                      aria-label="Nach oben"
+                      disabled={i === 0}
+                      onClick={() => movePlaylistTrack(selectedLocalPlaylist.id, i, i - 1)}
+                      className="p-1 text-zinc-500 disabled:opacity-20"
+                    >
+                      <ChevronUp className="w-4 h-4" />
+                    </button>
+                    <button
+                      aria-label="Nach unten"
+                      disabled={i === selectedLocalPlaylist.tracks.length - 1}
+                      onClick={() => movePlaylistTrack(selectedLocalPlaylist.id, i, i + 1)}
+                      className="p-1 text-zinc-500 disabled:opacity-20"
+                    >
+                      <ChevronDown className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <button
+                    aria-label="Aus Playlist entfernen"
+                    onClick={() => {
+                      removeFromPlaylist(selectedLocalPlaylist.id, track.id);
+                      toast('Aus Playlist entfernt');
+                    }}
+                    className="p-1.5 text-zinc-500 hover:text-red-400"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
               ))}
             </div>
           )}
@@ -364,14 +538,17 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ userProfile, onOpenAut
                   Noch keine Lieblingslieder vorhanden. Klicke auf das Herz bei einem Song!
                 </div>
               ) : (
-                displayLiked.map((track, i) => (
+                <>
+                <PlayAllBar tracks={displayLiked} />
+                {displayLiked.map((track, i) => (
                   <TrackItem
                     key={`${track.id}-${i}`}
                     track={track}
                     index={i + 1}
                     playlistContext={displayLiked}
                   />
-                ))
+                ))}
+                </>
               )}
             </div>
           )}
@@ -490,6 +667,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ userProfile, onOpenAut
                 {cacheInfo.count > 0 && (
                   <button
                     onClick={async () => {
+                      if (!window.confirm(`Alle ${cacheInfo.count} Offline-Titel löschen?`)) return;
                       for (const t of cacheInfo.tracks) {
                         await api.deleteFromCache(t.id);
                       }
@@ -508,6 +686,15 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ userProfile, onOpenAut
                 </div>
               ) : (
                 <div className="space-y-1">
+                  <PlayAllBar
+                    tracks={cacheInfo.tracks.map((t) => ({
+                      id: t.id,
+                      title: t.title || `Offline Track (${t.id})`,
+                      artist: t.artist || 'Offline Audio',
+                      thumbnail: t.thumbnail || `https://i.ytimg.com/vi/${t.id}/hqdefault.jpg`,
+                      duration: t.duration || '3:30',
+                    }))}
+                  />
                   {cacheInfo.tracks.map((ct) => (
                     <div
                       key={ct.id}
@@ -556,6 +743,67 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ userProfile, onOpenAut
             </div>
           )}
 
+          {/* Statistics tab */}
+          {activeTab === 'stats' && (() => {
+            const span = statsRange === 'week' ? 7 * 864e5 : statsRange === 'month' ? 30 * 864e5 : 1e13;
+            const songs = topTracks(span, 10);
+            const artists = topArtists(span, 5);
+            const plays = totalPlays(span);
+            return (
+              <div className="space-y-4">
+                <div className="flex gap-1.5">
+                  {([['week', '7 Tage'], ['month', '30 Tage'], ['all', 'Gesamt']] as const).map(([v, l]) => (
+                    <button
+                      key={v}
+                      onClick={() => setStatsRange(v)}
+                      className={`px-3 py-1.5 rounded-full text-xs font-semibold ${statsRange === v ? 'bg-white text-black' : 'bg-white/10 text-zinc-300'}`}
+                    >
+                      {l}
+                    </button>
+                  ))}
+                </div>
+                <div className="p-4 rounded-2xl bg-gradient-to-br from-red-700/40 to-zinc-900 border border-white/10">
+                  <div className="text-3xl font-black text-white">{plays}</div>
+                  <div className="text-xs text-zinc-300">Songs gehört · etwa {Math.round((plays * 3.5) / 60)} Stunden</div>
+                </div>
+                {plays === 0 ? (
+                  <div className="text-center py-8 text-zinc-500 text-xs">Noch keine Daten – hör ein paar Songs!</div>
+                ) : (
+                  <>
+                    <div>
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 mb-2">Top-Künstler</h3>
+                      {artists.map((a, i) => (
+                        <button
+                          key={a.artist}
+                          onClick={() => window.dispatchEvent(new CustomEvent('ytm:search', { detail: a.artist }))}
+                          className="w-full flex items-center justify-between py-1.5 text-sm text-white"
+                        >
+                          <span className="truncate">
+                            <span className="text-zinc-500 mr-2">{i + 1}</span>
+                            {a.artist}
+                          </span>
+                          <span className="text-xs text-zinc-400">{a.plays}×</span>
+                        </button>
+                      ))}
+                    </div>
+                    <div>
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 mb-2">Top-Songs</h3>
+                      <PlayAllBar tracks={songs.map((x) => x.track)} />
+                      {songs.map((x, i) => (
+                        <div key={x.track.id} className="flex items-center">
+                          <div className="flex-1 min-w-0">
+                            <TrackItem track={x.track} index={i + 1} playlistContext={songs.map((y) => y.track)} />
+                          </div>
+                          <span className="text-xs text-zinc-400 pr-2">{x.plays}×</span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            );
+          })()}
+
           {/* History tab */}
           {activeTab === 'history' && (
             <div className="space-y-1">
@@ -564,14 +812,37 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ userProfile, onOpenAut
                   Noch kein Verlauf vorhanden.
                 </div>
               ) : (
-                displayHistory.map((track, i) => (
-                  <TrackItem
-                    key={`${track.id}-${i}`}
-                    track={track}
-                    index={i + 1}
-                    playlistContext={displayHistory}
-                  />
-                ))
+                <>
+                <PlayAllBar tracks={displayHistory} />
+                {!usingYtHistory && (
+                  <div className="flex justify-end">
+                    <button
+                      onClick={() => {
+                        if (window.confirm('Ganzen Verlauf auf diesem Gerät löschen?')) clearHistory();
+                      }}
+                      className="text-[11px] text-red-400 px-2 py-1"
+                    >
+                      Verlauf löschen
+                    </button>
+                  </div>
+                )}
+                {displayHistory.map((track, i) => (
+                  <div key={`${track.id}-${i}`} className="flex items-center">
+                    <div className="flex-1 min-w-0">
+                      <TrackItem track={track} index={i + 1} playlistContext={displayHistory} />
+                    </div>
+                    {!usingYtHistory && (
+                      <button
+                        aria-label="Aus Verlauf entfernen"
+                        onClick={() => removeFromHistory(track.id)}
+                        className="p-1.5 text-zinc-500 hover:text-red-400"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+                </>
               )}
             </div>
           )}

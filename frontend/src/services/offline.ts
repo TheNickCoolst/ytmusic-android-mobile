@@ -93,13 +93,33 @@ export const getOfflineBytes = async (id: string): Promise<{ bytes: Uint8Array; 
 
 const inflight = new Map<string, Promise<void>>();
 
-export const downloadOffline = (id: string, info: Partial<OfflineMeta> = {}): Promise<void> => {
+/** Above the limit from the settings, the oldest offline songs are removed (never `keep`). */
+const enforceLimit = async (keep: string) => {
+  const { getSettings } = await import('./settings');
+  const limit = getSettings().offlineLimitMB * 1048576;
+  if (!limit) return;
+  const list = Object.values(meta).sort((a, b) => a.savedAt - b.savedAt);
+  let total = list.reduce((n, m) => n + m.size, 0);
+  for (const m of list) {
+    if (total <= limit) break;
+    if (m.id === keep) continue;
+    total -= m.size;
+    await deleteOffline(m.id);
+    console.info(`Offline-Limit: ${m.id} entfernt`);
+  }
+};
+
+export const downloadOffline = (
+  id: string,
+  info: Partial<OfflineMeta> = {},
+  onProgress?: (fraction: number) => void
+): Promise<void> => {
   if (meta[id]) return Promise.resolve();
   const running = inflight.get(id);
   if (running) return running;
   const p = (async () => {
     const { downloadAudio } = await import('./dj');
-    const { bytes, mime } = await downloadAudio(id, true);
+    const { bytes, mime } = await downloadAudio(id, true, onProgress);
     if (bytes.length < 10_000) throw new Error('Audiodatei unvollständig');
     const type = mime.split(';')[0] || 'audio/mp4';
     await tx('readwrite', (s) => s.put(new Blob([bytes], { type }), id));
@@ -115,6 +135,7 @@ export const downloadOffline = (id: string, info: Partial<OfflineMeta> = {}): Pr
     };
     saveMeta();
     console.info(`Offline gespeichert: ${id} (${(bytes.length / 1048576).toFixed(1)} MB)`);
+    await enforceLimit(id).catch(() => {});
   })().finally(() => inflight.delete(id));
   inflight.set(id, p);
   return p;

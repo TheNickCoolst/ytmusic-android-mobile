@@ -1,7 +1,7 @@
 // DJ mode: beat/energy analysis of tracks and planning of beat-matched transitions.
 // The analysis runs on decoded PCM (downsampled), the mix itself on two <audio> elements.
-import { CapacitorHttp } from '@capacitor/core';
-import { isNativeApp, getDirectAudioUrl } from './youtube';
+import { CapacitorHttp, registerPlugin } from '@capacitor/core';
+import { isNativeApp, isMacApp, getDirectAudioUrl } from './youtube';
 import { api } from './api';
 
 export interface TrackAnalysis {
@@ -301,8 +301,24 @@ export const fetchBytes = async (url: string): Promise<Uint8Array> => {
   return new Uint8Array(await r.arrayBuffer());
 };
 
+/** Mobile networks drop single requests now and then (connection reset/abort, DNS hiccup). */
+const fetchRetry = async (url: string, tries = 3): Promise<Uint8Array> => {
+  for (let n = 1; ; n++) {
+    try {
+      return await fetchBytes(url);
+    } catch (e) {
+      if (n >= tries) throw e;
+      await new Promise((r) => setTimeout(r, 700 * n));
+    }
+  }
+};
+
 /** Download the full audio file. YouTube URLs are fetched as parallel range chunks (fast, not throttled). */
-export const downloadAudio = async (id: string, skipOffline = false): Promise<{ bytes: Uint8Array; mime: string }> => {
+export const downloadAudio = async (
+  id: string,
+  skipOffline = false,
+  onProgress?: (fraction: number) => void
+): Promise<{ bytes: Uint8Array; mime: string }> => {
   if (!skipOffline) {
     const local = await (await import('./offline')).getOfflineBytes(id);
     if (local) return local;
@@ -318,11 +334,13 @@ export const downloadAudio = async (id: string, skipOffline = false): Promise<{ 
       for (let s = 0; s < clen; s += CH) ranges.push([s, Math.min(clen, s + CH) - 1]);
       const parts: Uint8Array[] = new Array(ranges.length);
       let next = 0;
+      let done = 0;
       const worker = async () => {
         while (next < ranges.length) {
           const i = next++;
           const [s, e] = ranges[i];
-          parts[i] = await fetchBytes(`${url}&range=${s}-${e}`);
+          parts[i] = await fetchRetry(`${url}&range=${s}-${e}`);
+          onProgress?.(++done / ranges.length);
         }
       };
       await Promise.all([worker(), worker(), worker(), worker()]);
@@ -334,12 +352,28 @@ export const downloadAudio = async (id: string, skipOffline = false): Promise<{ 
       }
       return { bytes: out, mime };
     }
-    return { bytes: await fetchBytes(url), mime };
+    return { bytes: await fetchRetry(url), mime };
   }
   return { bytes: await fetchBytes(api.getStreamUrl(id)), mime: 'audio/mp4' };
 };
 
+// Mac app only (youtube_music/Catalyst/MacSupport.swift): WebAudio in its web view can't decode
+// YouTube's audio, so the file is decoded natively to mono PCM.
+const MacAudio = registerPlugin<{ decodeMono(o: { data: string; sampleRate: number }): Promise<{ pcm: string }> }>(
+  'MacAudio'
+);
+const bytesToB64 = (b: Uint8Array): string => {
+  let s = '';
+  for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000) as any);
+  return btoa(s);
+};
+
 const decodeMono = async (bytes: Uint8Array): Promise<Float32Array> => {
+  if (isMacApp()) {
+    const { pcm } = await MacAudio.decodeMono({ data: bytesToB64(bytes), sampleRate: ANALYSIS_SR });
+    const raw = b64ToBytes(pcm);
+    return new Float32Array(raw.buffer, 0, raw.length >> 2);
+  }
   const Ctx = (window as any).OfflineAudioContext || (window as any).webkitOfflineAudioContext;
   const ctx: OfflineAudioContext = new Ctx(1, ANALYSIS_SR, ANALYSIS_SR);
   const buf = await ctx.decodeAudioData(bytes.slice().buffer);
@@ -375,7 +409,13 @@ export const prepareTrack = (id: string, keepBlob: boolean): Promise<PreparedTra
         analysisCache.set(id, analysis);
         persistAnalysis();
       }
-      const blobUrl = keepBlob ? URL.createObjectURL(new Blob([bytes], { type: mime })) : null;
+      // The Mac app's WebKit can't play in-memory blobs; its deck plays the direct URL instead
+      // (revokeObjectURL on it later is a harmless no-op).
+      const blobUrl = !keepBlob
+        ? null
+        : isMacApp()
+          ? await getDirectAudioUrl(id)
+          : URL.createObjectURL(new Blob([bytes], { type: mime }));
       return { id, analysis, blobUrl };
     })().finally(() => inflight.delete(key));
     inflight.set(key, p);

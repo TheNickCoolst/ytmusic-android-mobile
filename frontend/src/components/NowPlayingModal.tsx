@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   ChevronDown,
+  ChevronUp,
+  ListPlus,
   Play,
   Pause,
   SkipBack,
@@ -9,6 +11,7 @@ import {
   Repeat,
   Repeat1,
   ThumbsUp,
+  Heart,
   ThumbsDown,
   Share2,
   Download,
@@ -34,6 +37,8 @@ import {
 import { usePlayer, usePlaybackTime } from '../context/PlayerContext';
 import { api } from '../services/api';
 import { EqualizerPreset } from '../types';
+import { tap, toast } from '../services/ui';
+import { useSettings } from '../services/settings';
 
 interface LyricLine {
   time: number;
@@ -78,6 +83,9 @@ export const NowPlayingModal: React.FC = () => {
     queue,
     queueIndex,
     removeFromQueue,
+    moveInQueue,
+    insertIntoQueue,
+    createPlaylistWith,
     autoPlayRadio,
     setAutoPlayRadio,
     isPlayerExpanded,
@@ -88,6 +96,8 @@ export const NowPlayingModal: React.FC = () => {
     isDisliked,
     sleepTimerRemaining,
     setSleepTimer,
+    sleepAtTrackEnd,
+    setSleepAtTrackEnd,
     playTrack,
     isVideoMode,
     setIsVideoMode,
@@ -117,6 +127,15 @@ export const NowPlayingModal: React.FC = () => {
   const [lyricsSource, setLyricsSource] = useState<string | null>(null);
   const [loadingLyrics, setLoadingLyrics] = useState(false);
   const [showSleepMenu, setShowSleepMenu] = useState(false);
+  const lastCoverTapRef = useRef(0);
+  const coverTouchRef = useRef<{ x: number; y: number } | null>(null);
+  const { seekStep } = useSettings();
+  const [heartPop, setHeartPop] = useState(0);
+  useEffect(() => {
+    if (!heartPop) return;
+    const t = setTimeout(() => setHeartPop(0), 700);
+    return () => clearTimeout(t);
+  }, [heartPop]);
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [scrubValue, setScrubValue] = useState(0);
   const [downloaded, setDownloaded] = useState(false);
@@ -182,6 +201,38 @@ export const NowPlayingModal: React.FC = () => {
   }, [activeLyricIndex, activeTab, isSynced]);
 
   if (!isPlayerExpanded || !currentTrack) return null;
+
+  // cover gestures: swipe left/right = next/previous song, swipe down = close the player
+  const onCoverTouchStart = (e: React.TouchEvent) => {
+    coverTouchRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  };
+  const onCoverTouchEnd = (e: React.TouchEvent) => {
+    const s0 = coverTouchRef.current;
+    coverTouchRef.current = null;
+    if (!s0) return;
+    const dx = e.changedTouches[0].clientX - s0.x;
+    const dy = e.changedTouches[0].clientY - s0.y;
+    if (Math.abs(dx) > 70 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      tap();
+      if (dx < 0) nextTrack();
+      else previousTrack();
+    } else if (dy > 90 && dy > Math.abs(dx) * 1.5) {
+      setIsPlayerExpanded(false);
+    }
+  };
+
+  // double tap on the cover = like (with a heart pop)
+  const onCoverTap = () => {
+    const now = Date.now();
+    if (now - lastCoverTapRef.current < 320) {
+      lastCoverTapRef.current = 0;
+      if (!isLiked(currentTrack.id)) toggleLike(currentTrack);
+      tap(15);
+      setHeartPop(Date.now());
+    } else {
+      lastCoverTapRef.current = now;
+    }
+  };
 
   const liked = isLiked(currentTrack.id);
   const disliked = isDisliked(currentTrack.id);
@@ -407,7 +458,7 @@ export const NowPlayingModal: React.FC = () => {
           <button
             onClick={() => setShowSleepMenu(!showSleepMenu)}
             className={`p-2 rounded-full active:scale-90 transition ${
-              sleepTimerRemaining ? 'bg-red-600 text-white' : 'text-zinc-300 hover:text-white'
+              sleepTimerRemaining || sleepAtTrackEnd ? 'bg-red-600 text-white' : 'text-zinc-300 hover:text-white'
             }`}
             title="Schlaf-Timer"
           >
@@ -421,7 +472,7 @@ export const NowPlayingModal: React.FC = () => {
             <div className="fixed inset-0 z-40" onClick={() => setShowSleepMenu(false)} />
             <div className="absolute right-4 top-14 z-50 w-52 bg-[#1c1c1c] border border-white/10 rounded-2xl shadow-2xl p-2 backdrop-blur-xl">
               <div className="text-xs font-semibold px-3 py-1.5 text-zinc-400 border-b border-white/5">
-                Schlaf-Timer {sleepTimerRemaining ? `(${Math.ceil(sleepTimerRemaining / 60)}m)` : ''}
+                Schlaf-Timer {sleepTimerRemaining ? `(${Math.ceil(sleepTimerRemaining / 60)}m)` : sleepAtTrackEnd ? '(Titelende)' : ''}
               </div>
               {[15, 30, 45, 60].map((mins) => (
                 <button
@@ -438,7 +489,17 @@ export const NowPlayingModal: React.FC = () => {
                   )}
                 </button>
               ))}
-              {sleepTimerRemaining && (
+              <button
+                onClick={() => {
+                  setSleepAtTrackEnd(!sleepAtTrackEnd);
+                  setShowSleepMenu(false);
+                }}
+                className="w-full text-left px-3 py-2 text-xs text-zinc-200 hover:bg-white/10 rounded-lg flex items-center justify-between"
+              >
+                <span>Ende des Titels</span>
+                {sleepAtTrackEnd && <Check className="w-4 h-4 text-red-500" />}
+              </button>
+              {(sleepTimerRemaining || sleepAtTrackEnd) && (
                 <button
                   onClick={() => {
                     setSleepTimer(null);
@@ -472,7 +533,17 @@ export const NowPlayingModal: React.FC = () => {
           ) : (
             /* Album Artwork with Soft Shadow & Audio Visualizer */
             <div className="w-full h-full relative flex flex-col justify-center">
-              <div className="w-full h-full rounded-2xl overflow-hidden shadow-2xl shadow-black/90 bg-zinc-900 border border-white/10">
+              <div
+                onClick={onCoverTap}
+                onTouchStart={onCoverTouchStart}
+                onTouchEnd={onCoverTouchEnd}
+                className="relative w-full h-full rounded-2xl overflow-hidden shadow-2xl shadow-black/90 bg-zinc-900 border border-white/10"
+              >
+                {heartPop > 0 && (
+                  <div key={heartPop} className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none animate-ping">
+                    <Heart className="w-24 h-24 text-white fill-red-500 drop-shadow-2xl" />
+                  </div>
+                )}
                 <img
                   src={currentTrack.thumbnail}
                   alt={currentTrack.title}
@@ -606,8 +677,24 @@ export const NowPlayingModal: React.FC = () => {
             />
           </div>
 
-          <div className="flex justify-between text-xs font-mono text-zinc-400 mt-1">
+          <div className="flex justify-between items-center text-xs font-mono text-zinc-400 mt-1">
             <span>{formatTime(currentDisplayTime)}</span>
+            <div className="flex items-center gap-2 font-sans">
+              <button
+                aria-label={`${seekStep} Sekunden zurück`}
+                onClick={() => seek(Math.max(0, currentTime - seekStep))}
+                className="px-2 py-0.5 rounded-full bg-white/5 text-[11px] text-zinc-300 active:scale-95"
+              >
+                −{seekStep}s
+              </button>
+              <button
+                aria-label={`${seekStep} Sekunden vor`}
+                onClick={() => seek(Math.min(Math.max(0, duration - 1), currentTime + seekStep))}
+                className="px-2 py-0.5 rounded-full bg-white/5 text-[11px] text-zinc-300 active:scale-95"
+              >
+                +{seekStep}s
+              </button>
+            </div>
             <span>{formatTime(duration)}</span>
           </div>
         </div>
@@ -764,6 +851,17 @@ export const NowPlayingModal: React.FC = () => {
                   </button>
                 </div>
 
+                <button
+                  onClick={() => {
+                    const name = `Warteschlange ${new Date().toLocaleDateString('de-DE')}`;
+                    createPlaylistWith(name, queue);
+                    toast(`Als Playlist „${name}“ gespeichert`);
+                  }}
+                  className="w-full flex items-center justify-center gap-1.5 px-2 py-1.5 mb-2 text-xs text-zinc-300 bg-white/5 rounded-lg active:scale-95"
+                >
+                  <ListPlus className="w-4 h-4" /> Warteschlange als Playlist speichern
+                </button>
+
                 {/* Queue list */}
                 {queue.map((track, i) => {
                   const isTrackCurrent = i === queueIndex;
@@ -791,17 +889,36 @@ export const NowPlayingModal: React.FC = () => {
                         </div>
                       </div>
 
-                      {i !== queueIndex && (
+                      <div className="flex items-center flex-shrink-0" onClick={(e) => e.stopPropagation()}>
                         <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            removeFromQueue(i);
-                          }}
-                          className="p-1.5 text-zinc-500 hover:text-red-400 transition"
+                          aria-label="Nach oben"
+                          disabled={i === 0}
+                          onClick={() => moveInQueue(i, i - 1)}
+                          className="p-1.5 text-zinc-500 disabled:opacity-20"
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
+                          <ChevronUp className="w-3.5 h-3.5" />
                         </button>
-                      )}
+                        <button
+                          aria-label="Nach unten"
+                          disabled={i === queue.length - 1}
+                          onClick={() => moveInQueue(i, i + 1)}
+                          className="p-1.5 text-zinc-500 disabled:opacity-20"
+                        >
+                          <ChevronDown className="w-3.5 h-3.5" />
+                        </button>
+                        {i !== queueIndex && (
+                          <button
+                            aria-label="Aus Warteschlange entfernen"
+                            onClick={() => {
+                              removeFromQueue(i);
+                              toast('Entfernt', 'info', { label: 'Rückgängig', run: () => insertIntoQueue(i, track) });
+                            }}
+                            className="p-1.5 text-zinc-500 hover:text-red-400 transition"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
                     </div>
                   );
                 })}
