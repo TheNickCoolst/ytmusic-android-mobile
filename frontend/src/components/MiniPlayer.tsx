@@ -55,7 +55,7 @@ export const MiniPlayer: React.FC = () => {
     }
   };
 
-  const progressPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
+  const progressPercent = duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0;
   const liked = isLiked(currentTrack.id);
 
   return (
@@ -70,28 +70,30 @@ export const MiniPlayer: React.FC = () => {
       onTouchStart={onTouchStart}
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}
-      className="fixed bottom-[calc(56px+max(var(--sab),8px))] left-2 right-2 z-30 bg-[#212121]/95 backdrop-blur-xl border border-white/10 rounded-xl overflow-hidden shadow-2xl cursor-pointer select-none active:scale-[0.99] transition duration-150"
+      className="fixed bottom-mini left-2 right-2 z-30 max-w-xl mx-auto rounded-2xl overflow-hidden shadow-float cursor-pointer select-none bg-surface-3 border border-white/[0.08] transition-transform duration-150 active:scale-[0.99]"
+      style={{ height: 'var(--mini-h)' }}
     >
-      {/* Top progress bar */}
-      <div className="w-full bg-white/10 h-0.5">
-        <div
-          className="bg-red-600 h-full transition-all duration-200"
-          style={{ width: `${progressPercent}%` }}
-        />
-      </div>
+      {/* cover tint: blurred artwork behind the bar (hidden in battery-saver mode) */}
+      <img
+        key={currentTrack.thumbnail}
+        src={currentTrack.thumbnail}
+        alt=""
+        aria-hidden
+        className="absolute inset-0 w-full h-full object-cover scale-150 blur-[28px] opacity-60 pointer-events-none"
+      />
+      <div className="absolute inset-0 bg-black/45 pointer-events-none" />
 
-      <div className="flex items-center justify-between px-3 py-2">
-        {/* Track thumbnail & info */}
+      <div className="relative h-full flex items-center pl-2 pr-1">
         <div
-          className="flex items-center space-x-3 min-w-0 flex-1 mr-2"
-          style={dragX ? { transform: `translateX(${dragX}px)`, opacity: 1 - Math.abs(dragX) / 180 } : undefined}
+          className="flex items-center min-w-0 flex-1 mr-1"
+          style={
+            dragX
+              ? { transform: `translateX(${dragX}px)`, opacity: 1 - Math.abs(dragX) / 180 }
+              : { transition: 'transform 0.25s var(--ease-out), opacity 0.25s ease' }
+          }
         >
-          <div className="relative w-11 h-11 flex-shrink-0 rounded-lg overflow-hidden bg-zinc-800 shadow-md">
-            <img
-              src={currentTrack.thumbnail}
-              alt={currentTrack.title}
-              className={`w-full h-full object-cover ${isPlaying ? 'scale-105' : 'scale-100'} transition-transform duration-700`}
-            />
+          <div className="relative w-12 h-12 flex-shrink-0 rounded-xl overflow-hidden bg-zinc-800 shadow-md">
+            <img src={currentTrack.thumbnail} alt={currentTrack.title} className="w-full h-full object-cover" />
             {isBuffering && (
               <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
                 <Loader2 className="w-5 h-5 text-white animate-spin" />
@@ -99,27 +101,27 @@ export const MiniPlayer: React.FC = () => {
             )}
           </div>
 
-          <div className="min-w-0 flex-1">
-            <div className="text-sm font-semibold text-white truncate tracking-tight">
+          <div className="min-w-0 flex-1 ml-3">
+            <div className="text-[0.875rem] font-semibold text-white truncate tracking-tight leading-snug">
               {currentTrack.title}
             </div>
-            <div className="text-xs text-zinc-400 truncate">
-              {currentTrack.artist}
-            </div>
+            <div className="text-[0.8125rem] text-white/60 truncate leading-snug">{currentTrack.artist}</div>
           </div>
         </div>
 
-        {/* Action Controls */}
-        <div className="flex items-center space-x-1" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center flex-shrink-0" onClick={(e) => e.stopPropagation()}>
           <button
             onClick={() => {
               tap();
               toggleLike(currentTrack);
             }}
-            className="p-2 text-zinc-400 hover:text-red-500 transition active:scale-90"
-            title={liked ? "Gefällt mir entfernen" : "Gefällt mir"}
+            className={`w-11 h-11 rounded-full flex items-center justify-center press ${
+              liked ? 'text-red-500' : 'text-white/70 hover:text-white'
+            }`}
+            aria-label={liked ? 'Gefällt mir entfernen' : 'Gefällt mir'}
+            title={liked ? 'Gefällt mir entfernen' : 'Gefällt mir'}
           >
-            <Heart className={`w-5 h-5 ${liked ? 'fill-red-500 text-red-500' : ''}`} />
+            <Heart className={`w-[1.375rem] h-[1.375rem] ${liked ? 'fill-current' : ''}`} />
           </button>
 
           <button
@@ -128,13 +130,14 @@ export const MiniPlayer: React.FC = () => {
               togglePlay();
             }}
             disabled={isBuffering}
-            className="p-2.5 rounded-full text-white bg-white/10 hover:bg-white/20 active:scale-90 transition"
-            title={isPlaying ? "Pause" : "Abspielen"}
+            className="w-11 h-11 rounded-full flex items-center justify-center text-white press"
+            aria-label={isPlaying ? 'Pause' : 'Abspielen'}
+            title={isPlaying ? 'Pause' : 'Abspielen'}
           >
             {isPlaying ? (
-              <Pause className="w-5 h-5 fill-white" />
+              <Pause className="w-7 h-7 fill-white stroke-none" />
             ) : (
-              <Play className="w-5 h-5 fill-white ml-0.5" />
+              <Play className="w-7 h-7 fill-white stroke-none ml-0.5" />
             )}
           </button>
 
@@ -143,12 +146,18 @@ export const MiniPlayer: React.FC = () => {
               tap();
               nextTrack();
             }}
-            className="p-2 text-zinc-300 hover:text-white transition active:scale-90"
+            className="w-11 h-11 rounded-full flex items-center justify-center text-white press"
+            aria-label="Nächster Titel"
             title="Nächster Titel"
           >
-            <SkipForward className="w-5 h-5 fill-current" />
+            <SkipForward className="w-6 h-6 fill-current" />
           </button>
         </div>
+      </div>
+
+      {/* progress along the bottom edge */}
+      <div className="absolute left-3 right-3 bottom-0 h-[2px] rounded-full bg-white/15 overflow-hidden">
+        <div className="h-full bg-white rounded-full transition-[width] duration-300 ease-linear" style={{ width: `${progressPercent}%` }} />
       </div>
     </div>
   );

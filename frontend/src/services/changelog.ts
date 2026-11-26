@@ -1,6 +1,10 @@
 // Shown once after an update ("Was ist neu") and in the settings.
-export const CHANGELOG_ID = 'features-2026-11-21b';
+export const CHANGELOG_ID = 'design-2026-11-26';
 export const CHANGELOG = [
+  'Neues Design: aufgeräumter, größere Knöpfe, schönere Listen und Karten',
+  'Suche ist jetzt ein eigener Tab unten – die Entdecken-Kacheln findest du dort unter „Stöbern“',
+  'Player passt auf einen Bildschirm; Als Nächstes, Songtext und Studio öffnen sich unten als Panel',
+  'Charts: Herz und Song-Menü (⋮) direkt in jeder Zeile',
   'Einstellungen (Zahnrad oben): Lautstärke angleichen, Schriftgröße, Akku-Sparmodus, Download-Optionen',
   'Song-Menü: Als Nächstes abspielen, Teilen, Mehr vom Künstler, Nicht interessiert',
   'Wischen: Mini-Player und Cover links/rechts = Songwechsel, Player nach unten = schließen',

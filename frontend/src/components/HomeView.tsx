@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, MoreVertical, Flame, RefreshCw, Loader2, Sparkles, Disc, ArrowDown } from 'lucide-react';
+import { Play, Loader2, ArrowDown } from 'lucide-react';
+import { EqBars, SectionHeader } from './Primitives';
 import { Track } from '../types';
 import { api } from '../services/api';
 import { isNativeApp, HomeCard } from '../services/youtube';
 import { usePlayer } from '../context/PlayerContext';
 import { greeting, tap, toast } from '../services/ui';
 import { HomeExtras } from './HomeExtras';
+import { TrackItem } from './TrackItem';
 
 const HOME_CACHE_KEY = 'ytmusic_home_cache';
 const readHomeCache = (): any[] | null => {
@@ -174,58 +176,75 @@ export const HomeView: React.FC<HomeViewProps> = ({ filterMood, onChips, account
     return ids.length > 0 && ids.filter((id) => recentIds.has(id)).length >= Math.min(4, ids.length);
   });
 
+  const cardOverlay = (busy: boolean) => (
+    <div
+      className={`absolute inset-0 flex items-center justify-center transition-opacity ${
+        busy ? 'bg-black/50 opacity-100' : 'bg-black/25 opacity-0 group-hover:opacity-100'
+      }`}
+    >
+      <div className="w-11 h-11 rounded-full bg-white/95 flex items-center justify-center shadow-lg">
+        {busy ? (
+          <Loader2 className="w-5 h-5 text-black animate-spin" />
+        ) : (
+          <Play className="w-5 h-5 text-black fill-black ml-0.5" />
+        )}
+      </div>
+    </div>
+  );
+
   return (
-    <div className="pb-36 space-y-7 pt-2 select-none" onTouchStart={onPullStart} onTouchMove={onPullMove} onTouchEnd={onPullEnd}>
+    <div className="pb-player space-y-9 pt-3 select-none" onTouchStart={onPullStart} onTouchMove={onPullMove} onTouchEnd={onPullEnd}>
       {pull > 0 && (
-        <div className="flex justify-center -mb-5" style={{ height: pull }}>
-          <ArrowDown
-            className={`w-5 h-5 mt-2 transition-transform ${pull >= 70 ? 'rotate-180 text-red-500' : 'text-zinc-500'}`}
-          />
+        <div className="flex justify-center -mb-6 overflow-hidden" style={{ height: pull }}>
+          <div
+            className={`mt-2 w-9 h-9 rounded-full flex items-center justify-center shadow-float transition-colors ${
+              pull >= 70 ? 'bg-white text-black' : 'bg-surface-3 text-zinc-400'
+            }`}
+          >
+            <ArrowDown className={`w-5 h-5 transition-transform duration-200 ${pull >= 70 ? 'rotate-180' : ''}`} />
+          </div>
         </div>
       )}
       {!filterMood && (
-        <h1 className="px-4 pt-1 -mb-3 text-2xl font-black text-white tracking-tight">
+        <h1 className="px-4 -mb-4 text-[1.75rem] leading-tight font-extrabold text-white tracking-tight">
           {greeting()}
           {loggedIn && accountKey ? `, ${accountKey.split(' ')[0]}` : ''} 👋
         </h1>
       )}
-      {/* Zuletzt gehört (Listen Again) from History if available */}
+      {filterMood && (
+        <h1 className="px-4 -mb-4 text-[1.75rem] leading-tight font-extrabold text-white tracking-tight truncate">{filterMood}</h1>
+      )}
+
+      {/* Zuletzt gehört: quick-access tiles (2 columns) */}
       {!loading && recent.length > 0 && !filterMood && !hasYtListenAgain && (
         <section className="px-4">
-          <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-400 mb-1">
-            WIEDER REINHÖREN
-          </div>
-          <h2 className="text-xl font-black text-white tracking-tight mb-3">
-            Zuletzt gehört
-          </h2>
-          <div className="flex space-x-3 overflow-x-auto pb-2 scrollbar-none -mx-4 px-4">
-            {recent.slice(0, 8).map((track) => {
+          <SectionHeader eyebrow="Wieder reinhören" title="Zuletzt gehört" />
+          <div className="grid grid-cols-2 gap-2">
+            {recent.slice(0, 6).map((track) => {
               const isCurrent = currentTrack?.id === track.id;
               return (
-                <div
+                <button
                   key={track.id}
-                  onClick={() => playTrack(track, recent)}
-                  className="w-32 flex-shrink-0 cursor-pointer group active:scale-95 transition"
+                  onClick={() => {
+                    tap();
+                    playTrack(track, recent);
+                  }}
+                  className={`flex items-center h-14 rounded-xl overflow-hidden text-left press ${
+                    isCurrent ? 'bg-white/[0.14]' : 'bg-white/[0.07] hover:bg-white/[0.1]'
+                  }`}
                 >
-                  <div className="relative aspect-square rounded-xl overflow-hidden bg-zinc-900 shadow-md mb-2">
-                    <img
-                      src={track.thumbnail}
-                      alt={track.title}
-                      className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
-                    />
-                    <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
-                      <div className="w-10 h-10 rounded-full bg-red-600 flex items-center justify-center shadow-lg">
-                        <Play className="w-5 h-5 text-white fill-white ml-0.5" />
-                      </div>
-                    </div>
-                  </div>
-                  <div className={`text-xs font-semibold truncate ${isCurrent ? 'text-red-400' : 'text-white'}`}>
-                    {track.title}
-                  </div>
-                  <div className="text-[11px] text-zinc-400 truncate">
-                    {track.artist}
-                  </div>
-                </div>
+                  <img src={track.thumbnail} alt="" className="w-14 h-14 object-cover flex-shrink-0" loading="lazy" />
+                  <span className="flex-1 min-w-0 px-2.5">
+                    <span
+                      className={`block text-[0.8125rem] font-semibold leading-tight line-clamp-2 ${
+                        isCurrent ? 'text-red-400' : 'text-white'
+                      }`}
+                    >
+                      {track.title}
+                    </span>
+                  </span>
+                  {isCurrent && <EqBars playing={isPlaying} className="mr-2.5 flex-shrink-0" />}
+                </button>
               );
             })}
           </div>
@@ -235,9 +254,22 @@ export const HomeView: React.FC<HomeViewProps> = ({ filterMood, onChips, account
       {!loading && !filterMood && <HomeExtras recent={recent} />}
 
       {loading ? (
-        <div className="flex flex-col items-center justify-center py-20 text-zinc-500 space-y-2">
-          <Loader2 className="w-8 h-8 animate-spin text-red-600" />
-          <span className="text-xs">Lade YouTube Music...</span>
+        <div className="space-y-9" aria-label="Lade YouTube Music…">
+          {[0, 1, 2].map((i) => (
+            <section key={i} className="px-4">
+              <div className="skeleton h-3 w-24 rounded-full mb-2" />
+              <div className="skeleton h-6 w-48 rounded-lg mb-4" />
+              <div className="flex space-x-3 overflow-hidden -mx-4 px-4">
+                {[0, 1, 2, 3].map((j) => (
+                  <div key={j} className="w-[9.5rem] flex-shrink-0">
+                    <div className="skeleton aspect-square rounded-2xl mb-2.5" />
+                    <div className="skeleton h-3 w-28 rounded-full mb-1.5" />
+                    <div className="skeleton h-3 w-20 rounded-full" />
+                  </div>
+                ))}
+              </div>
+            </section>
+          ))}
         </div>
       ) : (
         shelves.map((shelf) => {
@@ -245,75 +277,54 @@ export const HomeView: React.FC<HomeViewProps> = ({ filterMood, onChips, account
           if (shelf.type === 'columns_4' && shelf.columns) {
             return (
               <section key={shelf.id} className="px-4">
-                <div className="flex items-center justify-between mb-2">
-                  <div>
-                    {shelf.subtitle && (
-                      <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">
-                        {shelf.subtitle}
-                      </div>
-                    )}
-                    <h2 className="text-xl font-black text-white tracking-tight">
-                      {shelf.title}
-                    </h2>
-                  </div>
-                  <button
-                    onClick={() => {
-                      if (shelf.tracks && shelf.tracks.length > 0) {
-                        playTrack(shelf.tracks[0], shelf.tracks);
-                      }
-                    }}
-                    className="px-3 py-1 rounded-full bg-white/10 hover:bg-white/20 text-xs font-semibold text-white border border-white/10 active:scale-95 transition"
-                  >
-                    Alle wiedergeben
-                  </button>
-                </div>
-
-                {/* Horizontal scrollable columns */}
-                <div className="flex space-x-3 overflow-x-auto pb-2 scrollbar-none -mx-4 px-4 snap-x">
-                  {shelf.columns.map((col: Track[], colIdx: number) => (
-                    <div
-                      key={colIdx}
-                      className="w-[82vw] max-w-[320px] flex-shrink-0 space-y-2.5 snap-start"
+                <SectionHeader
+                  eyebrow={shelf.subtitle}
+                  title={shelf.title}
+                  action={
+                    <button
+                      onClick={() => {
+                        tap();
+                        if (shelf.tracks && shelf.tracks.length > 0) {
+                          playTrack(shelf.tracks[0], shelf.tracks);
+                        }
+                      }}
+                      className="h-9 px-4 rounded-full border border-white/15 text-[0.8125rem] font-semibold text-white hover:bg-white/10 press"
                     >
+                      Alle abspielen
+                    </button>
+                  }
+                />
+
+                <div className="shelf space-x-3 scrollbar-none -mx-4 px-4">
+                  {shelf.columns.map((col: Track[], colIdx: number) => (
+                    <div key={colIdx} className="w-[84vw] max-w-[340px] space-y-1">
                       {col.map((track) => {
                         const isCurrent = currentTrack?.id === track.id;
                         return (
                           <div
                             key={track.id}
                             onClick={() => playTrack(track, shelf.tracks)}
-                            className={`flex items-center justify-between p-1.5 rounded-xl transition cursor-pointer active:scale-[0.98] ${
-                              isCurrent ? 'bg-white/10' : 'hover:bg-white/5'
+                            className={`flex items-center h-16 px-1.5 rounded-2xl cursor-pointer transition-colors ${
+                              isCurrent ? 'bg-white/[0.07]' : 'hover:bg-white/[0.04] active:bg-white/[0.07]'
                             }`}
                           >
-                            <div className="flex items-center space-x-3 min-w-0 flex-1 mr-2">
-                              <div className="relative w-12 h-12 flex-shrink-0 rounded-lg overflow-hidden bg-zinc-800">
-                                <img
-                                  src={track.thumbnail}
-                                  alt={track.title}
-                                  className="w-full h-full object-cover"
-                                  loading="lazy"
-                                />
-                                {isCurrent && isPlaying && (
-                                  <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
-                                    <div className="flex items-end space-x-0.5 h-3.5">
-                                      <span className="w-0.5 bg-red-500 animate-pulse h-full"></span>
-                                      <span className="w-0.5 bg-red-500 animate-pulse delay-75 h-2/3"></span>
-                                      <span className="w-0.5 bg-red-500 animate-pulse delay-150 h-5/6"></span>
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                              <div className="min-w-0 flex-1">
-                                <div className={`text-xs font-semibold truncate ${isCurrent ? 'text-red-400' : 'text-white'}`}>
-                                  {track.title}
+                            <div className="relative w-12 h-12 flex-shrink-0 rounded-xl overflow-hidden bg-white/[0.06]">
+                              <img src={track.thumbnail} alt={track.title} className="w-full h-full object-cover" loading="lazy" />
+                              {isCurrent && (
+                                <div className="absolute inset-0 bg-black/55 flex items-center justify-center">
+                                  <EqBars playing={isPlaying} />
                                 </div>
-                                <div className="text-[11px] text-zinc-400 truncate mt-0.5">
-                                  {track.artist}
-                                </div>
-                              </div>
+                              )}
                             </div>
-                            <div className="text-zinc-500 p-2">
-                              <MoreVertical className="w-4 h-4" />
+                            <div className="min-w-0 flex-1 ml-3">
+                              <div
+                                className={`text-[0.9375rem] leading-snug truncate ${
+                                  isCurrent ? 'text-red-400 font-semibold' : 'text-white font-medium'
+                                }`}
+                              >
+                                {track.title}
+                              </div>
+                              <div className="text-[0.8125rem] leading-snug text-zinc-400 truncate mt-0.5">{track.artist}</div>
                             </div>
                           </div>
                         );
@@ -329,48 +340,11 @@ export const HomeView: React.FC<HomeViewProps> = ({ filterMood, onChips, account
           if (shelf.type === 'rankings' && shelf.items) {
             return (
               <section key={shelf.id} className="px-4">
-                <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 mb-0.5">
-                  {shelf.subtitle || 'CHARTS'}
-                </div>
-                <h2 className="text-xl font-black text-white tracking-tight mb-3">
-                  {shelf.title}
-                </h2>
-                <div className="space-y-1">
-                  {shelf.items.slice(0, 10).map((track: any, idx: number) => {
-                    const isCurrent = currentTrack?.id === track.id;
-                    return (
-                      <div
-                        key={track.id || idx}
-                        onClick={() => playTrack(track, shelf.items)}
-                        className={`flex items-center justify-between p-2 rounded-xl transition cursor-pointer active:scale-[0.98] ${
-                          isCurrent ? 'bg-white/10' : 'hover:bg-white/5'
-                        }`}
-                      >
-                        <div className="flex items-center space-x-3.5 min-w-0 flex-1">
-                          <span className={`w-5 text-center text-sm font-black ${idx < 3 ? 'text-red-500' : 'text-zinc-500'}`}>
-                            {idx + 1}
-                          </span>
-                          <img
-                            src={track.thumbnail}
-                            alt={track.title}
-                            className="w-11 h-11 rounded-lg object-cover flex-shrink-0"
-                            loading="lazy"
-                          />
-                          <div className="min-w-0 flex-1">
-                            <div className={`text-xs font-semibold truncate ${isCurrent ? 'text-red-400' : 'text-white'}`}>
-                              {track.title}
-                            </div>
-                            <div className="text-[11px] text-zinc-400 truncate">
-                              {track.artist}
-                            </div>
-                          </div>
-                        </div>
-                        <div className="text-xs font-mono text-zinc-500">
-                          {track.duration}
-                        </div>
-                      </div>
-                    );
-                  })}
+                <SectionHeader eyebrow={shelf.subtitle || 'Charts'} title={shelf.title} />
+                <div className="space-y-0.5 -mx-2">
+                  {shelf.items.slice(0, 10).map((track: any, idx: number) => (
+                    <TrackItem key={track.id || idx} track={track} rank={idx + 1} playlistContext={shelf.items} />
+                  ))}
                 </div>
               </section>
             );
@@ -380,51 +354,37 @@ export const HomeView: React.FC<HomeViewProps> = ({ filterMood, onChips, account
           if (shelf.type === 'cards' && shelf.items) {
             return (
               <section key={shelf.id} className="px-4">
-                {shelf.subtitle && (
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 mb-0.5">
-                    {shelf.subtitle}
-                  </div>
-                )}
-                <h2 className="text-xl font-black text-white tracking-tight mb-3">{shelf.title}</h2>
-                <div className="flex space-x-3 overflow-x-auto pb-2 scrollbar-none -mx-4 px-4">
+                <SectionHeader eyebrow={shelf.subtitle} title={shelf.title} />
+                <div className="shelf space-x-3 scrollbar-none -mx-4 px-4">
                   {shelf.items.map((card: HomeCard) => {
                     const round = card.kind === 'artist';
                     const isCurrent = card.kind === 'song' && currentTrack?.id === card.videoId;
                     return (
                       <div
                         key={`${shelf.id}_${card.id}`}
-                        onClick={() => openCard(card)}
-                        className="w-36 flex-shrink-0 cursor-pointer group active:scale-95 transition"
+                        onClick={() => {
+                          tap();
+                          openCard(card);
+                        }}
+                        className="w-[9.5rem] cursor-pointer group press"
                       >
                         <div
-                          className={`relative aspect-square overflow-hidden bg-zinc-900 shadow-md mb-2 ${
-                            round ? 'rounded-full' : 'rounded-xl'
+                          className={`relative aspect-square overflow-hidden bg-white/[0.06] mb-2.5 ${
+                            round ? 'rounded-full' : 'rounded-2xl'
                           }`}
                         >
                           <img src={card.thumbnail} alt="" className="w-full h-full object-cover" loading="lazy" />
-                          <div
-                            className={`absolute inset-0 flex items-center justify-center transition ${
-                              openingCard === card.id ? 'bg-black/50 opacity-100' : 'bg-black/30 opacity-0 group-hover:opacity-100'
-                            }`}
-                          >
-                            <div className="w-10 h-10 rounded-full bg-red-600 flex items-center justify-center shadow-lg">
-                              {openingCard === card.id ? (
-                                <Loader2 className="w-5 h-5 text-white animate-spin" />
-                              ) : (
-                                <Play className="w-5 h-5 text-white fill-white ml-0.5" />
-                              )}
-                            </div>
-                          </div>
+                          {cardOverlay(openingCard === card.id)}
                         </div>
                         <div
-                          className={`text-xs font-semibold line-clamp-2 ${round ? 'text-center' : ''} ${
+                          className={`text-[0.8125rem] font-semibold leading-snug line-clamp-2 ${round ? 'text-center' : ''} ${
                             isCurrent ? 'text-red-400' : 'text-white'
                           }`}
                         >
                           {card.title}
                         </div>
                         {card.subtitle && (
-                          <div className={`text-[11px] text-zinc-400 line-clamp-2 mt-0.5 ${round ? 'text-center' : ''}`}>
+                          <div className={`text-xs leading-snug text-zinc-400 line-clamp-2 mt-0.5 ${round ? 'text-center' : ''}`}>
                             {card.subtitle}
                           </div>
                         )}
@@ -440,41 +400,25 @@ export const HomeView: React.FC<HomeViewProps> = ({ filterMood, onChips, account
           if (shelf.type === 'playlists' && shelf.items) {
             return (
               <section key={shelf.id} className="px-4">
-                <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 mb-0.5">
-                  {shelf.subtitle}
-                </div>
-                <h2 className="text-xl font-black text-white tracking-tight mb-3">
-                  {shelf.title}
-                </h2>
-                <div className="flex space-x-3 overflow-x-auto pb-2 scrollbar-none -mx-4 px-4">
+                <SectionHeader eyebrow={shelf.subtitle} title={shelf.title} />
+                <div className="shelf space-x-3 scrollbar-none -mx-4 px-4">
                   {shelf.items.map((pl: any) => (
                     <div
                       key={pl.id}
                       onClick={() => {
+                        tap();
                         api.search(pl.query, 'songs').then((res) => {
                           if (res.length > 0) playTrack(res[0], res);
                         });
                       }}
-                      className="w-36 flex-shrink-0 cursor-pointer group active:scale-95 transition"
+                      className="w-[9.5rem] cursor-pointer group press"
                     >
-                      <div className="relative aspect-square rounded-xl overflow-hidden bg-zinc-900 shadow-md mb-2">
-                        <img
-                          src={pl.thumbnail}
-                          alt={pl.title}
-                          className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
-                        />
-                        <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
-                          <div className="w-10 h-10 rounded-full bg-red-600 flex items-center justify-center shadow-lg">
-                            <Play className="w-5 h-5 text-white fill-white ml-0.5" />
-                          </div>
-                        </div>
+                      <div className="relative aspect-square rounded-2xl overflow-hidden bg-white/[0.06] mb-2.5">
+                        <img src={pl.thumbnail} alt={pl.title} className="w-full h-full object-cover" loading="lazy" />
+                        {cardOverlay(false)}
                       </div>
-                      <div className="text-xs font-semibold text-white truncate">
-                        {pl.title}
-                      </div>
-                      <div className="text-[11px] text-zinc-400 truncate">
-                        {pl.subtitle}
-                      </div>
+                      <div className="text-[0.8125rem] font-semibold leading-snug text-white truncate">{pl.title}</div>
+                      <div className="text-xs leading-snug text-zinc-400 truncate mt-0.5">{pl.subtitle}</div>
                     </div>
                   ))}
                 </div>
@@ -488,7 +432,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ filterMood, onChips, account
 
       {!loading && loadingMore && (
         <div className="flex justify-center py-4 text-zinc-500">
-          <Loader2 className="w-5 h-5 animate-spin text-red-600" />
+          <Loader2 className="w-5 h-5 animate-spin text-zinc-500" />
         </div>
       )}
     </div>

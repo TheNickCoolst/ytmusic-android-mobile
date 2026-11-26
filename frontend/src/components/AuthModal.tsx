@@ -368,7 +368,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 <p>
                   <strong>So funktioniert es:</strong>
                   <br />
-                  1. Tippe oben auf <strong>„Im normalen Handy-Browser öffnen“</strong>.
+                  1. Tippe oben auf <strong>„Im normalen Browser öffnen“</strong>.
                   <br />
                   2. Melde dich bei YouTube Music an.
                   <br />

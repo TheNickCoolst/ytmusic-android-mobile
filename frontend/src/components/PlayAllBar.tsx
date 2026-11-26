@@ -18,15 +18,16 @@ export const PlayAllBar: React.FC<{ tracks: Track[] }> = ({ tracks }) => {
   const { playTrack } = usePlayer();
   if (tracks.length < 2) return null;
   return (
-    <div className="flex items-center gap-2 mb-2">
+    <div className="flex items-center space-x-2.5 mb-3">
       <button
         onClick={() => {
           tap();
           playTrack(tracks[0], tracks);
         }}
-        className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-full bg-white text-black text-xs font-bold active:scale-95 transition"
+        className="flex-1 h-11 flex items-center justify-center space-x-2 rounded-full bg-white text-black text-[0.875rem] font-bold press"
       >
-        <Play className="w-4 h-4 fill-black" /> Alle abspielen
+        <Play className="w-[1.125rem] h-[1.125rem] fill-black" />
+        <span>Alle abspielen</span>
       </button>
       <button
         onClick={() => {
@@ -34,9 +35,10 @@ export const PlayAllBar: React.FC<{ tracks: Track[] }> = ({ tracks }) => {
           const s = shuffled(tracks);
           playTrack(s[0], s);
         }}
-        className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-full bg-white/10 text-white text-xs font-bold active:scale-95 transition"
+        className="flex-1 h-11 flex items-center justify-center space-x-2 rounded-full bg-white/[0.1] text-white text-[0.875rem] font-bold press"
       >
-        <Shuffle className="w-4 h-4" /> Zufällig
+        <Shuffle className="w-[1.125rem] h-[1.125rem]" />
+        <span>Zufällig</span>
       </button>
     </div>
   );

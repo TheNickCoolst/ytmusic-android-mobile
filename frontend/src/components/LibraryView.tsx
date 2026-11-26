@@ -21,12 +21,14 @@ import {
   ChevronDown,
   Search,
   BarChart3,
+  ChevronRight,
 } from 'lucide-react';
 import { toast } from '../services/ui';
 import { topTracks, topArtists, totalPlays } from '../services/stats';
 import { usePlayer } from '../context/PlayerContext';
 import { TrackItem } from './TrackItem';
 import { PlayAllBar } from './PlayAllBar';
+import { EmptyState, goToTab } from './Primitives';
 import { api, UserProfile } from '../services/api';
 import { Track, Playlist } from '../types';
 
@@ -197,14 +199,14 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ userProfile, onOpenAut
   };
 
   return (
-    <div className="pb-36 px-4 space-y-4 pt-2 select-none">
+    <div className="pb-player px-4 space-y-5 pt-3 select-none">
       {/* Page Title & Account banner */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-black tracking-tight text-white">
+          <h2 className="text-[1.75rem] leading-tight font-extrabold tracking-tight text-white">
             Mediathek
           </h2>
-          <p className="text-xs text-zinc-400 mt-0.5">
+          <p className="text-[0.8125rem] text-zinc-500 mt-0.5">
             Deine Musik, Playlists & Offline-Titel
           </p>
         </div>
@@ -213,10 +215,11 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ userProfile, onOpenAut
             loadAccountData();
             loadCacheInfo();
           }}
-          className="p-2 text-zinc-400 hover:text-white rounded-full bg-white/5 active:scale-90 transition"
+          className="w-11 h-11 flex items-center justify-center text-zinc-300 hover:text-white rounded-full bg-white/[0.07] press"
           title="Aktualisieren"
+          aria-label="Aktualisieren"
         >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          <RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
         </button>
       </div>
 
@@ -224,44 +227,43 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ userProfile, onOpenAut
       {!userProfile.isLoggedIn ? (
         <div
           onClick={onOpenAuth}
-          className="p-4 rounded-2xl bg-gradient-to-r from-red-950/80 to-zinc-900 border border-red-500/30 flex items-center justify-between cursor-pointer active:scale-[0.99] transition shadow-lg"
+          className="p-4 rounded-3xl bg-gradient-to-br from-red-600/30 via-red-950/40 to-white/[0.04] border border-red-500/20 flex items-center cursor-pointer press shadow-float"
         >
-          <div className="flex items-center space-x-3">
-            <div className="w-10 h-10 rounded-xl bg-red-600/30 flex items-center justify-center text-red-500 flex-shrink-0">
-              <LogIn className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="text-sm font-bold text-white flex items-center space-x-1.5">
-                <span>Mit Google / YouTube anmelden</span>
-                <Sparkles className="w-3.5 h-3.5 text-red-400" />
-              </div>
-              <p className="text-xs text-zinc-400 mt-0.5">
-                Tippe hier für Login im mobilen Browser (ohne Google-Blockade).
-              </p>
-            </div>
+          <div className="w-11 h-11 rounded-2xl bg-red-600/30 flex items-center justify-center text-red-400 flex-shrink-0">
+            <LogIn className="w-5 h-5" />
           </div>
+          <div className="min-w-0 flex-1 mx-3">
+            <div className="text-[0.9375rem] font-bold text-white">
+              Mit Google anmelden
+              <Sparkles className="inline-block w-3.5 h-3.5 ml-1.5 -mt-0.5 text-red-400 align-middle" />
+            </div>
+            <p className="text-[0.8125rem] text-zinc-400 mt-0.5 leading-snug">
+              Holt deine Playlists, Lieblingssongs und deinen Verlauf von YouTube Music.
+            </p>
+          </div>
+          <ChevronRight className="w-5 h-5 text-zinc-400 flex-shrink-0" />
         </div>
       ) : (
-        <div className="p-3 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-between">
+        <div className="p-3 pl-3.5 rounded-3xl bg-white/[0.06] flex items-center justify-between">
           <div className="flex items-center space-x-2.5">
             <img
               src={userProfile.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150"}
               alt={userProfile.name}
-              className="w-8 h-8 rounded-full object-cover border border-emerald-500"
+              className="w-10 h-10 rounded-full object-cover ring-2 ring-emerald-500/60"
             />
             <div>
-              <div className="text-xs font-semibold text-white flex items-center space-x-1">
+              <div className="text-sm font-semibold text-white flex items-center space-x-1">
                 <span>{userProfile.name}</span>
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
               </div>
-              <p className="text-[10px] text-zinc-400">
-                YouTube Music synchronisiert
+              <p className="text-[0.75rem] text-zinc-400">
+                Mit YouTube Music verbunden
               </p>
             </div>
           </div>
           <button
             onClick={onOpenAuth}
-            className="text-[11px] text-zinc-400 hover:text-white px-2.5 py-1 rounded-full bg-white/5"
+            className="h-9 px-4 text-[0.8125rem] font-medium text-zinc-200 hover:text-white rounded-full bg-white/[0.08] press"
           >
             Verwalten
           </button>
@@ -269,13 +271,13 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ userProfile, onOpenAut
       )}
 
       {/* Library Tabs */}
-      <div className="flex space-x-2 overflow-x-auto pb-1 scrollbar-none border-b border-white/5">
+      <div className="shelf space-x-2 -mx-4 px-4 pb-1 scrollbar-none">
         {[
-          { id: 'liked', label: `Lieblingslieder (${displayLiked.length})`, icon: Heart },
-          { id: 'playlists', label: `Playlists (${ytPlaylists.length + playlists.length})`, icon: ListMusic },
-          { id: 'downloads', label: `Offline (${cacheInfo.count})`, icon: Download },
-          { id: 'history', label: `Verlauf (${displayHistory.length})`, icon: HistoryIcon },
-          { id: 'stats', label: 'Statistik', icon: BarChart3 },
+          { id: 'liked', label: 'Lieblingssongs', count: displayLiked.length, icon: Heart },
+          { id: 'playlists', label: 'Playlists', count: ytPlaylists.length + playlists.length, icon: ListMusic },
+          { id: 'downloads', label: 'Offline', count: cacheInfo.count, icon: Download },
+          { id: 'history', label: 'Verlauf', count: displayHistory.length, icon: HistoryIcon },
+          { id: 'stats', label: 'Statistik', count: 0, icon: BarChart3 },
         ].map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -286,14 +288,18 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ userProfile, onOpenAut
                 setActiveTab(tab.id as any);
                 setSelectedLocalPlaylist(null);
               }}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition active:scale-95 ${
+              aria-pressed={isActive}
+              className={`flex items-center space-x-1.5 h-10 px-4 rounded-full text-[0.8125rem] font-semibold whitespace-nowrap press ${
                 isActive
                   ? 'bg-white text-black'
-                  : 'bg-white/5 text-zinc-400 hover:text-white'
+                  : 'bg-white/[0.08] text-zinc-300 hover:text-white'
               }`}
             >
-              <Icon className="w-3.5 h-3.5" />
+              <Icon className={`w-4 h-4 ${isActive && tab.id === 'liked' ? 'fill-current' : ''}`} />
               <span>{tab.label}</span>
+              {tab.count > 0 && (
+                <span className={`tabular-nums text-[0.75rem] ${isActive ? 'text-black/50' : 'text-zinc-500'}`}>{tab.count}</span>
+              )}
             </button>
           );
         })}
@@ -301,17 +307,18 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ userProfile, onOpenAut
 
       {/* Search + sort inside the library */}
       {(activeTab === 'liked' || activeTab === 'history') && (
-        <div className="flex items-center gap-2">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500" />
+        <div className="flex items-center space-x-2">
+          <div className="relative flex-1 min-w-0">
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
             <input
               value={filterText}
               onChange={(e) => setFilterText(e.target.value)}
-              placeholder="In der Mediathek suchen…"
-              className="w-full bg-white/5 border border-white/10 rounded-full pl-8 pr-8 py-1.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-red-500"
+              placeholder="Filtern…"
+              aria-label="Mediathek filtern"
+              className="w-full h-10 bg-white/[0.07] border border-transparent rounded-full pl-10 pr-10 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-white/20"
             />
             {filterText && (
-              <button aria-label="Filter leeren" onClick={() => setFilterText('')} className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-zinc-500">
+              <button aria-label="Filter leeren" onClick={() => setFilterText('')} className="absolute right-0.5 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center rounded-full text-zinc-500">
                 <X className="w-3.5 h-3.5" />
               </button>
             )}
@@ -321,9 +328,9 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ userProfile, onOpenAut
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
               aria-label="Sortieren"
-              className="bg-white/5 border border-white/10 rounded-full px-2.5 py-1.5 text-xs text-zinc-200 focus:outline-none"
+              className="h-10 flex-shrink-0 bg-white/[0.07] border border-transparent rounded-full px-3 text-sm text-zinc-200 focus:outline-none"
             >
-              <option value="added">Zuletzt hinzugefügt</option>
+              <option value="added">Neueste zuerst</option>
               <option value="title">Titel A–Z</option>
               <option value="artist">Künstler A–Z</option>
             </select>
@@ -334,7 +341,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ userProfile, onOpenAut
       {/* Create Playlist Modal */}
       {showCreatePlaylistModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
-          <div className="w-full max-w-sm bg-[#1a1a1a] border border-white/10 rounded-2xl p-5 shadow-2xl">
+          <div className="w-full max-w-sm bg-surface-2 border border-white/[0.08] rounded-3xl p-5 shadow-2xl">
             <div className="flex items-center justify-between pb-3 border-b border-white/10">
               <h3 className="text-base font-bold text-white flex items-center space-x-2">
                 <Plus className="w-4 h-4 text-red-500" />
@@ -534,9 +541,16 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ userProfile, onOpenAut
           {activeTab === 'liked' && (
             <div className="space-y-1">
               {displayLiked.length === 0 ? (
-                <div className="text-center py-12 text-zinc-500 text-xs">
-                  Noch keine Lieblingslieder vorhanden. Klicke auf das Herz bei einem Song!
-                </div>
+                filterText ? (
+                  <EmptyState icon={Search} title="Nichts gefunden" hint={`Kein Lieblingssong passt zu „${filterText}“.`} />
+                ) : (
+                  <EmptyState
+                    icon={Heart}
+                    title="Noch keine Lieblingssongs"
+                    hint="Tippe bei einem Song auf das Herz – er landet dann hier."
+                    action={{ label: 'Musik finden', onClick: () => goToTab('search') }}
+                  />
+                )
               ) : (
                 <>
                 <PlayAllBar tracks={displayLiked} />
@@ -559,10 +573,12 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ userProfile, onOpenAut
               {/* Top Create Playlist Action */}
               <button
                 onClick={() => setShowCreatePlaylistModal(true)}
-                className="w-full p-3 rounded-xl bg-white/5 border border-dashed border-white/20 hover:border-red-500/50 flex items-center justify-center space-x-2 text-xs font-bold text-zinc-200 hover:text-white active:scale-[0.99] transition"
+                className="w-full h-14 px-3 rounded-2xl bg-white/[0.05] hover:bg-white/[0.08] flex items-center space-x-3 text-left press"
               >
-                <Plus className="w-4 h-4 text-red-500" />
-                <span>+ Neue eigene Playlist erstellen</span>
+                <span className="w-9 h-9 rounded-xl bg-red-500/15 text-red-400 flex items-center justify-center flex-shrink-0">
+                  <Plus className="w-5 h-5" />
+                </span>
+                <span className="text-[0.9375rem] font-semibold text-white">Neue Playlist erstellen</span>
               </button>
 
               {/* Local User Playlists */}
@@ -576,9 +592,9 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ userProfile, onOpenAut
                       <div
                         key={pl.id}
                         onClick={() => setSelectedLocalPlaylist(pl)}
-                        className="p-3 bg-[#181818] rounded-xl border border-white/5 hover:border-red-500/30 cursor-pointer active:scale-95 transition"
+                        className="p-2.5 bg-white/[0.05] rounded-2xl hover:bg-white/[0.08] cursor-pointer press"
                       >
-                        <div className="w-full aspect-square rounded-lg bg-zinc-800 flex items-center justify-center mb-2 overflow-hidden shadow-inner">
+                        <div className="w-full aspect-square rounded-xl bg-white/[0.06] flex items-center justify-center mb-2.5 overflow-hidden">
                           {pl.cover ? (
                             <img src={pl.cover} alt={pl.name} className="w-full h-full object-cover" />
                           ) : (
@@ -627,12 +643,12 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ userProfile, onOpenAut
                             if (res.length > 0) playTrack(res[0], res);
                           });
                         }}
-                        className="p-3 bg-[#181818] rounded-xl border border-white/5 hover:border-white/20 cursor-pointer active:scale-95 transition"
+                        className="p-2.5 bg-white/[0.05] rounded-2xl hover:bg-white/[0.08] cursor-pointer press"
                       >
                         <img
                           src={pl.thumbnail}
                           alt={pl.title}
-                          className="w-full aspect-square rounded-lg object-cover mb-2"
+                          className="w-full aspect-square rounded-xl object-cover mb-2.5"
                         />
                         <div className="text-xs font-bold text-white truncate">
                           {pl.title}
@@ -681,9 +697,11 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ userProfile, onOpenAut
               </div>
 
               {cacheInfo.tracks.length === 0 ? (
-                <div className="text-center py-12 text-zinc-500 text-xs">
-                  Noch keine Titel heruntergeladen. Tippe bei einem Song auf "Für Offline laden"!
-                </div>
+                <EmptyState
+                  icon={Download}
+                  title="Noch nichts offline"
+                  hint="Im Song-Menü (⋮) auf „Für Offline laden“ tippen – dann läuft der Song auch ohne Internet."
+                />
               ) : (
                 <div className="space-y-1">
                   <PlayAllBar
@@ -808,9 +826,16 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ userProfile, onOpenAut
           {activeTab === 'history' && (
             <div className="space-y-1">
               {displayHistory.length === 0 ? (
-                <div className="text-center py-12 text-zinc-500 text-xs">
-                  Noch kein Verlauf vorhanden.
-                </div>
+                filterText ? (
+                  <EmptyState icon={Search} title="Nichts gefunden" hint={`Kein Song im Verlauf passt zu „${filterText}“.`} />
+                ) : (
+                  <EmptyState
+                    icon={HistoryIcon}
+                    title="Noch nichts gehört"
+                    hint="Songs, die du abspielst, erscheinen hier."
+                    action={{ label: 'Musik finden', onClick: () => goToTab('search') }}
+                  />
+                )
               ) : (
                 <>
                 <PlayAllBar tracks={displayHistory} />

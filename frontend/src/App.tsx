@@ -7,7 +7,6 @@ import { NowPlayingModal } from './components/NowPlayingModal';
 import { AuthModal } from './components/AuthModal';
 import { HomeView } from './components/HomeView';
 import { SearchView } from './components/SearchView';
-import { ExploreView } from './components/ExploreView';
 import { LibraryView } from './components/LibraryView';
 import { api, UserProfile } from './services/api';
 import { initUpdater, applyUpdate, UpdateStatus, currentWebBuild, installDownloadedApk } from './services/updater';
@@ -15,6 +14,7 @@ import { googleAuthService } from './services/googleAuth';
 import { Capacitor } from '@capacitor/core';
 import { Toaster } from './components/Toaster';
 import { SettingsModal } from './components/SettingsModal';
+import { Sheet } from './components/Sheet';
 import { CHANGELOG, CHANGELOG_ID } from './services/changelog';
 import { useBackClose, useOnline } from './services/ui';
 
@@ -30,7 +30,7 @@ const PlaybackErrorBanner: React.FC = () => {
   return (
     <div
       onClick={clearPlaybackError}
-      className="mx-3 mb-2 rounded-xl bg-red-600/90 px-4 py-3 text-sm text-white shadow-lg"
+      className="mx-3 mb-2 rounded-2xl bg-red-600/95 px-4 py-3 text-sm text-white shadow-float animate-in fade-in slide-in-from-bottom-4"
     >
       ⚠️ {playbackError}
     </div>
@@ -54,18 +54,18 @@ const UpdateBanner: React.FC<{ status: UpdateStatus | null; onClose: () => void;
             ? `📲 Version ${status.version} bereit – im Fenster auf „Aktualisieren“ tippen`
             : `⚠️ Update fehlgeschlagen${status.error ? ` (${status.error})` : ''}`;
     return (
-      <div className="mx-3 mb-2 rounded-xl bg-blue-600/95 px-4 py-2.5 text-sm text-white shadow-lg flex items-center justify-between gap-3">
+      <div className="mx-3 mb-2 rounded-2xl bg-blue-600/95 px-4 py-2.5 text-sm text-white shadow-float flex items-center justify-between gap-3">
         <span className="min-w-0">{text}</span>
         <div className="flex items-center gap-2 flex-shrink-0">
           {status.phase !== 'downloading' && (
             <button
               onClick={() => installDownloadedApk(status.version, status.url, onStatus)}
-              className="rounded-lg bg-white/95 px-2.5 py-1 text-xs font-bold text-blue-700 active:scale-95"
+              className="rounded-full bg-white/95 h-8 px-3.5 text-xs font-bold text-blue-700 active:scale-95"
             >
               {status.phase === 'error' ? 'Nochmal' : 'Installieren'}
             </button>
           )}
-          <button onClick={onClose} className="text-white/80 px-1" aria-label="Schließen">
+          <button onClick={onClose} className="w-8 h-8 -mr-1 rounded-full flex items-center justify-center text-white/80 active:bg-white/20" aria-label="Schließen">
             ✕
           </button>
         </div>
@@ -74,7 +74,7 @@ const UpdateBanner: React.FC<{ status: UpdateStatus | null; onClose: () => void;
   }
   if (status.type === 'ready') {
     return (
-      <div className="mx-3 mb-2 rounded-xl bg-emerald-600/95 px-4 py-2.5 text-sm text-white shadow-lg flex items-center justify-between gap-3">
+      <div className="mx-3 mb-2 rounded-2xl bg-emerald-600/95 px-4 py-2.5 text-sm text-white shadow-float flex items-center justify-between gap-3">
         <span className="min-w-0">✨ Update geladen – wird beim nächsten Start aktiv</span>
         <div className="flex items-center gap-2 flex-shrink-0">
           <button
@@ -83,11 +83,11 @@ const UpdateBanner: React.FC<{ status: UpdateStatus | null; onClose: () => void;
               setBusy(true);
               applyUpdate(status.bundleId).catch(() => setBusy(false));
             }}
-            className="rounded-lg bg-white/95 px-2.5 py-1 text-xs font-bold text-emerald-700 active:scale-95"
+            className="rounded-full bg-white/95 h-8 px-3.5 text-xs font-bold text-emerald-700 active:scale-95"
           >
             {busy ? '…' : 'Jetzt'}
           </button>
-          <button onClick={onClose} className="text-white/80 px-1" aria-label="Schließen">
+          <button onClick={onClose} className="w-8 h-8 -mr-1 rounded-full flex items-center justify-center text-white/80 active:bg-white/20" aria-label="Schließen">
             ✕
           </button>
         </div>
@@ -96,7 +96,7 @@ const UpdateBanner: React.FC<{ status: UpdateStatus | null; onClose: () => void;
   }
   const isAndroid = Capacitor.getPlatform() === 'android';
   return (
-    <div className="mx-3 mb-2 rounded-xl bg-blue-600/95 px-4 py-2.5 text-sm text-white shadow-lg flex items-center justify-between gap-3">
+    <div className="mx-3 mb-2 rounded-2xl bg-blue-600/95 px-4 py-2.5 text-sm text-white shadow-float flex items-center justify-between gap-3">
       <span className="min-w-0">
         📲 Neue App-Version verfügbar{isAndroid ? '' : ' – in SideStore aktualisieren'}
       </span>
@@ -104,12 +104,12 @@ const UpdateBanner: React.FC<{ status: UpdateStatus | null; onClose: () => void;
         {isAndroid && status.info.apk && (
           <button
             onClick={() => googleAuthService.openSystemBrowser(status.info.apk).catch(() => {})}
-            className="rounded-lg bg-white/95 px-2.5 py-1 text-xs font-bold text-blue-700 active:scale-95"
+            className="rounded-full bg-white/95 h-8 px-3.5 text-xs font-bold text-blue-700 active:scale-95"
           >
             Laden
           </button>
         )}
-        <button onClick={onClose} className="text-white/80 px-1" aria-label="Schließen">
+        <button onClick={onClose} className="w-8 h-8 -mr-1 rounded-full flex items-center justify-center text-white/80 active:bg-white/20" aria-label="Schließen">
           ✕
         </button>
       </div>
@@ -121,7 +121,7 @@ const OfflineBanner: React.FC = () => {
   const online = useOnline();
   if (online) return null;
   return (
-    <div className="mx-3 mb-2 rounded-xl bg-zinc-800/95 px-4 py-2.5 text-xs text-zinc-200 shadow-lg">
+    <div className="mx-3 mb-2 rounded-2xl glass border border-white/[0.08] px-4 py-2.5 text-xs text-zinc-200 shadow-float">
       📴 Keine Internetverbindung – Offline-Songs findest du in der Mediathek.
     </div>
   );
@@ -143,22 +143,19 @@ const WhatsNew: React.FC = () => {
       return false;
     }
   });
-  useBackClose(open, () => setOpen(false));
-  if (!open) return null;
   return (
-    <div className="fixed inset-0 z-[70] bg-black/80 flex items-end sm:items-center justify-center p-3" onClick={() => setOpen(false)}>
-      <div className="w-full max-w-md bg-[#1c1c1c] border border-white/10 rounded-2xl p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <h2 className="text-lg font-black text-white">✨ Was ist neu</h2>
-        <ul className="mt-3 space-y-2 text-xs text-zinc-300 list-disc pl-4 max-h-[50vh] overflow-y-auto">
-          {CHANGELOG.map((c) => (
-            <li key={c}>{c}</li>
-          ))}
-        </ul>
-        <button onClick={() => setOpen(false)} className="mt-5 w-full py-2.5 rounded-full bg-white text-black text-sm font-bold active:scale-95">
+    <Sheet open={open} onClose={() => setOpen(false)} title="✨ Was ist neu">
+      <ul className="px-3 space-y-2.5 text-sm text-zinc-300 list-disc pl-7">
+        {CHANGELOG.map((c) => (
+          <li key={c}>{c}</li>
+        ))}
+      </ul>
+      <div className="px-3 pt-5 pb-1">
+        <button onClick={() => setOpen(false)} className="w-full h-12 rounded-full bg-white text-black text-sm font-bold press">
           Los geht's
         </button>
       </div>
-    </div>
+    </Sheet>
   );
 };
 
@@ -185,8 +182,9 @@ const AppContent: React.FC = () => {
 
   const [activeTab, setActiveTab] = useState<NavTab>(() => {
     try {
-      const t = localStorage.getItem(TAB_KEY) as NavTab | null;
-      return t === 'home' || t === 'explore' || t === 'library' ? t : 'home';
+      const t = localStorage.getItem(TAB_KEY);
+      // "explore" was merged into the search tab
+      return t === 'explore' || t === 'search' ? 'search' : t === 'library' ? 'library' : 'home';
     } catch {
       return 'home';
     }
@@ -194,7 +192,6 @@ const AppContent: React.FC = () => {
   const mainRef = useRef<HTMLElement>(null);
   const [activeMoodFilter, setActiveMoodFilter] = useState<string | null>(null);
   const [moodChips, setMoodChips] = useState<string[] | null>(null);
-  const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [userProfile, setUserProfile] = useState<UserProfile>({
@@ -222,18 +219,16 @@ const AppContent: React.FC = () => {
     } else {
       setActiveMoodFilter(filter);
       setActiveTab('home');
-      setIsSearchOpen(false);
     }
   };
 
   const handleTabChange = (tab: NavTab) => {
-    if (tab === activeTab && !isSearchOpen) {
+    if (tab === activeTab) {
       // tap on the active tab = back to the top
       mainRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
     setActiveTab(tab);
-    setIsSearchOpen(false);
     if (mainRef.current) mainRef.current.scrollTop = 0;
     try {
       localStorage.setItem(TAB_KEY, tab);
@@ -249,28 +244,39 @@ const AppContent: React.FC = () => {
       const q = String((e as CustomEvent).detail || '').trim();
       if (!q) return;
       setSearchSeed({ q, n: Date.now() });
-      setIsSearchOpen(true);
+      setActiveTab('search');
     };
     window.addEventListener('ytm:search', onSearch);
+    const onTab = (e: Event) => {
+      const t = (e as CustomEvent).detail;
+      if (t === 'home' || t === 'search' || t === 'library') setActiveTab(t);
+    };
+    window.addEventListener('ytm:tab', onTab);
     // Android "Teilen" -> this app: a YouTube link (or any text) opens in the search
     const onShared = () => {
       const t = (window as any).__sharedText;
       (window as any).__sharedText = null;
       if (typeof t === 'string' && t.trim()) {
         setSearchSeed({ q: t.trim().slice(0, 300), n: Date.now() });
-        setIsSearchOpen(true);
+        setActiveTab('search');
       }
     };
     window.addEventListener('ytm:shared', onShared);
     onShared();
     return () => {
       window.removeEventListener('ytm:search', onSearch);
+      window.removeEventListener('ytm:tab', onTab);
       window.removeEventListener('ytm:shared', onShared);
     };
   }, []);
 
+  // a "Mehr von …" / shared-link query belongs to that one visit of the search tab
+  useEffect(() => {
+    if (activeTab !== 'search') setSearchSeed(null);
+  }, [activeTab]);
+
   // Android back button closes the open screen instead of leaving the app
-  useBackClose(isSearchOpen, () => setIsSearchOpen(false));
+  useBackClose(activeTab === 'search', () => setActiveTab('home'));
   useBackClose(isPlayerExpanded, () => setIsPlayerExpanded(false));
   useBackClose(isAuthOpen, () => setIsAuthOpen(false));
   useBackClose(isSettingsOpen, () => setIsSettingsOpen(false));
@@ -298,50 +304,28 @@ const AppContent: React.FC = () => {
       <Header
         userProfile={userProfile}
         onOpenAuth={() => setIsAuthOpen(true)}
-        onOpenSearch={() => setIsSearchOpen(true)}
         onOpenSettings={() => setIsSettingsOpen(true)}
         activeFilter={activeMoodFilter}
         onSelectFilter={handleSelectFilter}
         chips={moodChips}
+        showChips={activeTab === 'home'}
       />
 
       {/* Main View Area */}
-      <main ref={mainRef} className="flex-1 overflow-y-auto overscroll-contain">
-        {isSearchOpen ? (
-          <div className="relative">
-            <div className="flex items-center justify-between px-4 pt-2">
-              <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider">
-                Suche
-              </span>
-              <button
-                onClick={() => setIsSearchOpen(false)}
-                className="text-xs text-red-400 font-semibold px-2 py-1"
-              >
-                Schließen
-              </button>
-            </div>
-            <SearchView key={searchSeed?.n || 0} initialQuery={searchSeed?.q} />
-          </div>
-        ) : (
-          <>
-            {activeTab === 'home' && <HomeView
+      <main ref={mainRef} className="flex-1 overflow-y-auto overscroll-contain" style={{ WebkitOverflowScrolling: 'touch' }}>
+        {activeTab === 'home' && (
+          <HomeView
             filterMood={activeMoodFilter}
             onChips={setMoodChips}
             accountKey={userProfile.isLoggedIn ? userProfile.name : 'guest'}
-          />}
-            {activeTab === 'explore' && <ExploreView />}
-            {activeTab === 'library' && (
-              <LibraryView
-                userProfile={userProfile}
-                onOpenAuth={() => setIsAuthOpen(true)}
-              />
-            )}
-          </>
+          />
         )}
+        {activeTab === 'search' && <SearchView key={searchSeed?.n || 0} initialQuery={searchSeed?.q} />}
+        {activeTab === 'library' && <LibraryView userProfile={userProfile} onOpenAuth={() => setIsAuthOpen(true)} />}
       </main>
 
       {/* Banners float above mini player + navigation */}
-      <div className="fixed left-0 right-0 z-[45] bottom-[calc(56px+max(var(--sab),8px)+76px)] pointer-events-none">
+      <div className="fixed left-0 right-0 z-[45] bottom-banners max-w-xl mx-auto pointer-events-none">
         <Toaster />
         <div className="pointer-events-auto">
           <OfflineBanner />

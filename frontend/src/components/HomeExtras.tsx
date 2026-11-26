@@ -89,47 +89,65 @@ const Banner: React.FC<{ title: string; subtitle: string; gradient: string; trac
   if (!tracks.length) return null;
   return (
     <section className="px-4">
-      <div className={`rounded-2xl bg-gradient-to-br ${gradient} p-4 mb-3 flex items-center gap-3 shadow-lg`}>
-        <div className="flex-1 min-w-0">
-          <div className="text-[10px] font-bold uppercase tracking-wider text-white/70">{subtitle}</div>
-          <h2 className="text-xl font-black text-white tracking-tight truncate">{title}</h2>
+      <div className={`relative overflow-hidden rounded-3xl bg-gradient-to-br ${gradient} p-4 mb-3 shadow-float`}>
+        <div className="flex items-center">
+          {/* 2x2 cover mosaic */}
+          <div className="grid grid-cols-2 w-[4.5rem] h-[4.5rem] rounded-2xl overflow-hidden flex-shrink-0 shadow-lg bg-black/20">
+            {tracks.slice(0, 4).map((t) => (
+              <img key={t.id} src={t.thumbnail} alt="" loading="lazy" className="w-full h-full object-cover" />
+            ))}
+          </div>
+          <div className="flex-1 min-w-0 ml-3.5">
+            <div className="text-[0.6875rem] font-semibold uppercase tracking-[0.08em] text-white/70 truncate">{subtitle}</div>
+            <h2 className="mt-0.5 text-[1.1875rem] leading-tight font-bold text-white tracking-tight line-clamp-2 break-words">
+              {title}
+            </h2>
+          </div>
         </div>
-        <button
-          onClick={() => {
-            tap();
-            const s = shuffled(tracks);
-            playTrack(s[0], s);
-          }}
-          aria-label={`${title} zufällig abspielen`}
-          className="w-10 h-10 rounded-full bg-white/15 flex items-center justify-center active:scale-95 transition"
-        >
-          <Shuffle className="w-5 h-5 text-white" />
-        </button>
-        <button
-          onClick={() => {
-            tap();
-            playTrack(tracks[0], tracks);
-          }}
-          aria-label={`${title} abspielen`}
-          className="w-11 h-11 rounded-full bg-white flex items-center justify-center active:scale-95 transition"
-        >
-          <Play className="w-5 h-5 text-black fill-black ml-0.5" />
-        </button>
+        <div className="flex items-center space-x-2 mt-3.5">
+          <button
+            onClick={() => {
+              tap();
+              playTrack(tracks[0], tracks);
+            }}
+            aria-label={`${title} abspielen`}
+            className="h-10 pl-3.5 pr-4 rounded-full bg-white flex items-center space-x-1.5 text-[0.8125rem] font-bold text-black shadow-lg press"
+          >
+            <Play className="w-4 h-4 fill-black" />
+            <span>Abspielen</span>
+          </button>
+          <button
+            onClick={() => {
+              tap();
+              const s = shuffled(tracks);
+              playTrack(s[0], s);
+            }}
+            aria-label={`${title} zufällig abspielen`}
+            className="h-10 pl-3.5 pr-4 rounded-full bg-black/25 flex items-center space-x-1.5 text-[0.8125rem] font-bold text-white press"
+          >
+            <Shuffle className="w-4 h-4" />
+            <span>Zufällig</span>
+          </button>
+        </div>
       </div>
-      <div className="flex space-x-3 overflow-x-auto pb-2 scrollbar-none -mx-4 px-4">
+      <div className="shelf space-x-3 scrollbar-none -mx-4 px-4">
         {tracks.slice(0, 15).map((track) => (
           <div
             key={track.id}
             onClick={() => playTrack(track, tracks)}
-            className="w-32 flex-shrink-0 cursor-pointer active:scale-95 transition"
+            className="w-[8.5rem] cursor-pointer press"
           >
-            <div className="aspect-square rounded-xl overflow-hidden bg-zinc-900 shadow-md mb-2">
+            <div className="aspect-square rounded-2xl overflow-hidden bg-white/[0.06] mb-2.5">
               <img src={track.thumbnail} alt={track.title} loading="lazy" className="w-full h-full object-cover" />
             </div>
-            <div className={`text-xs font-semibold truncate ${currentTrack?.id === track.id ? 'text-red-400' : 'text-white'}`}>
+            <div
+              className={`text-[0.8125rem] font-semibold leading-snug truncate ${
+                currentTrack?.id === track.id ? 'text-red-400' : 'text-white'
+              }`}
+            >
               {track.title}
             </div>
-            <div className="text-[11px] text-zinc-400 truncate">{track.artist}</div>
+            <div className="text-xs leading-snug text-zinc-400 truncate mt-0.5">{track.artist}</div>
           </div>
         ))}
       </div>

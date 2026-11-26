@@ -1,119 +1,102 @@
 import React from 'react';
-import { User, Search, Settings, CheckCircle2 } from 'lucide-react';
+import { User, Settings } from 'lucide-react';
 import { UserProfile } from '../services/api';
+import { tap } from '../services/ui';
 
 interface HeaderProps {
   userProfile: UserProfile;
   onOpenAuth: () => void;
-  onOpenSearch: () => void;
   onOpenSettings: () => void;
   activeFilter: string | null;
   onSelectFilter: (filter: string) => void;
   chips?: string[] | null;
+  /** mood chips belong to the start page; hidden on the other tabs and in the search */
+  showChips?: boolean;
 }
+
+const defaultChips = ['Energieschub', 'Entspannung', 'Workout', 'Unterwegs', 'Fokus', 'Party'];
+
+const iconBtn =
+  'w-11 h-11 rounded-full flex items-center justify-center text-zinc-200 hover:bg-white/10 active:bg-white/15 press';
 
 export const Header: React.FC<HeaderProps> = ({
   userProfile,
   onOpenAuth,
-  onOpenSearch,
   onOpenSettings,
   activeFilter,
   onSelectFilter,
   chips: liveChips,
+  showChips = true,
 }) => {
-  const defaultChips = [
-    'Energieschub',
-    'Entspannung',
-    'Workout',
-    'Unterwegs',
-    'Fokus',
-    'Party',
-  ];
   // real YouTube Music mood chips once the start page is loaded
   const chips = liveChips && liveChips.length ? liveChips : defaultChips;
 
   return (
-    <div className="sticky top-0 z-30 bg-[#030303]/95 backdrop-blur-xl border-b border-white/5 select-none">
-      {/* Top Main Bar */}
-      <div className="flex items-center justify-between px-4 pt-[calc(var(--sat)+12px)] pb-2">
-        {/* Brand: YouTube Music 1:1 Logo */}
-        <div className="flex items-center space-x-1.5 cursor-pointer">
-          <div className="w-6 h-6 rounded-full bg-red-600 flex items-center justify-center shadow-md shadow-red-600/40">
-            <div className="w-0 h-0 border-y-[4px] border-y-transparent border-l-[7px] border-l-white ml-0.5"></div>
+    <div className="sticky top-0 z-30 glass select-none">
+      <div className="flex items-center justify-between pl-4 pr-2 pb-1" style={{ paddingTop: 'calc(var(--sat) + 0.5rem)' }}>
+        {/* Brand */}
+        <div className="flex items-center">
+          <div className="w-7 h-7 rounded-full bg-gradient-to-br from-red-500 to-red-700 flex items-center justify-center shadow-lg shadow-red-600/30">
+            <div className="w-0 h-0 border-y-[5px] border-y-transparent border-l-[8px] border-l-white ml-0.5" />
           </div>
-          <span className="font-bold text-lg tracking-tight text-white font-sans">
-            Music
-          </span>
-          <span className="text-[9px] font-bold text-red-500 bg-red-500/10 px-1 py-0.2 rounded border border-red-500/20 ml-0.5">
+          <span className="ml-2 font-bold text-[1.25rem] tracking-tight text-white font-sans">Music</span>
+          <span className="ml-1.5 text-[0.5625rem] font-bold tracking-wide text-red-400 bg-red-500/10 px-1.5 py-0.5 rounded-md">
             550 PRO
           </span>
         </div>
 
-        {/* Action icons right */}
-        <div className="flex items-center space-x-3 text-white">
-          {/* Cast button */}
-          <button
-            className="p-1.5 text-zinc-300 hover:text-white active:scale-90 transition"
-            title="Einstellungen"
-            aria-label="Einstellungen"
-            onClick={onOpenSettings}
-          >
-            <Settings className="w-5 h-5" />
+        <div className="flex items-center">
+          <button className={iconBtn} title="Einstellungen" aria-label="Einstellungen" onClick={onOpenSettings}>
+            <Settings className="w-[1.375rem] h-[1.375rem]" />
           </button>
-
-          {/* Search magnifying glass */}
-          <button
-            onClick={onOpenSearch}
-            aria-label="Suchen"
-            className="p-1.5 text-zinc-300 hover:text-white active:scale-90 transition"
-            title="Suchen"
-          >
-            <Search className="w-5 h-5" />
-          </button>
-
-          {/* User Avatar Circle */}
           <button
             onClick={onOpenAuth}
-            className="relative flex items-center justify-center active:scale-90 transition ml-0.5"
-            title={userProfile.isLoggedIn ? userProfile.name : "Google Account"}
+            className="relative w-11 h-11 flex items-center justify-center press"
+            aria-label={userProfile.isLoggedIn ? `Konto: ${userProfile.name}` : 'Google-Konto'}
+            title={userProfile.isLoggedIn ? userProfile.name : 'Google-Konto'}
           >
             {userProfile.isLoggedIn && userProfile.avatar ? (
               <img
                 src={userProfile.avatar}
-                alt={userProfile.name}
-                className="w-7 h-7 rounded-full object-cover border border-emerald-400"
+                alt=""
+                className="w-8 h-8 rounded-full object-cover ring-2 ring-white/10"
               />
             ) : (
-              <div className="w-7 h-7 rounded-full bg-zinc-800 border border-white/20 flex items-center justify-center text-zinc-300">
-                <User className="w-4 h-4" />
+              <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-zinc-300">
+                <User className="w-[1.125rem] h-[1.125rem]" />
               </div>
             )}
             {userProfile.isLoggedIn && (
-              <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-500 rounded-full border border-[#030303]" />
+              <span className="absolute bottom-2 right-1.5 w-2.5 h-2.5 bg-emerald-500 rounded-full ring-2 ring-[#121214]" />
             )}
           </button>
         </div>
       </div>
 
-      {/* Horizontally scrolling Mood / Activity Chips (1:1 YTM) */}
-      <div className="flex items-center space-x-2 px-4 pb-2.5 overflow-x-auto scrollbar-none">
-        {chips.map((chip) => {
-          const isSelected = activeFilter === chip;
-          return (
-            <button
-              key={chip}
-              onClick={() => onSelectFilter(chip)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all active:scale-95 ${
-                isSelected
-                  ? 'bg-white text-black font-semibold shadow-md'
-                  : 'bg-[#212121] text-zinc-200 hover:bg-[#2e2e2e] border border-white/5'
-              }`}
-            >
-              {chip}
-            </button>
-          );
-        })}
-      </div>
+      {/* Mood / activity chips */}
+      {showChips && (
+        <div className="shelf space-x-2 px-4 pt-1 pb-3 scrollbar-none">
+          {chips.map((chip) => {
+            const isSelected = activeFilter === chip;
+            return (
+              <button
+                key={chip}
+                onClick={() => {
+                  tap();
+                  onSelectFilter(chip);
+                }}
+                className={`h-9 px-4 rounded-full text-[0.8125rem] whitespace-nowrap press ${
+                  isSelected
+                    ? 'bg-white text-black font-semibold'
+                    : 'bg-white/[0.08] text-zinc-200 font-medium hover:bg-white/[0.12]'
+                }`}
+              >
+                {chip}
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 };

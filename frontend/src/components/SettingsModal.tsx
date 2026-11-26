@@ -14,14 +14,14 @@ const Toggle: React.FC<{ on: boolean; onChange: (v: boolean) => void; label: str
     role="switch"
     aria-checked={on}
     onClick={() => onChange(!on)}
-    className="w-full flex items-center justify-between gap-3 py-3 text-left"
+    className="w-full min-h-[3.5rem] flex items-center justify-between gap-3 py-3 text-left"
   >
     <span className="min-w-0">
-      <span className="block text-sm text-white">{label}</span>
-      {hint && <span className="block text-[11px] text-zinc-400 mt-0.5">{hint}</span>}
+      <span className="block text-[0.9375rem] text-white">{label}</span>
+      {hint && <span className="block text-xs text-zinc-500 mt-0.5">{hint}</span>}
     </span>
-    <span className={`w-10 h-6 rounded-full p-0.5 flex-shrink-0 transition-colors ${on ? 'bg-red-600' : 'bg-zinc-700'}`}>
-      <span className={`block w-5 h-5 rounded-full bg-white transition-transform ${on ? 'translate-x-4' : ''}`} />
+    <span className={`w-12 h-7 rounded-full p-0.5 flex-shrink-0 transition-colors duration-200 ${on ? 'bg-red-600' : 'bg-white/15'}`}>
+      <span className={`block w-6 h-6 rounded-full bg-white shadow-md transition-transform duration-200 ${on ? 'translate-x-5' : ''}`} />
     </span>
   </button>
 );
@@ -45,7 +45,7 @@ function Choice<T extends string | number>({
           <button
             key={String(o.v)}
             onClick={() => onChange(o.v)}
-            className={`px-3 py-1.5 rounded-full text-xs font-semibold active:scale-95 ${
+            className={`h-9 px-4 rounded-full text-[0.8125rem] font-semibold press ${
               value === o.v ? 'bg-white text-black' : 'bg-white/10 text-zinc-300'
             }`}
           >
@@ -62,18 +62,18 @@ export const SettingsModal: React.FC<{ open: boolean; onClose: () => void }> = (
   if (!open) return null;
   const set = (p: Partial<AppSettings>) => updateSettings(p);
   return (
-    <div className="fixed inset-0 z-[60] bg-[#030303] flex flex-col">
-      <div className="flex items-center justify-between px-4 pt-[calc(var(--sat)+12px)] pb-3 border-b border-white/5">
-        <h2 className="text-lg font-black text-white flex items-center gap-2">
+    <div className="fixed inset-0 z-[60] bg-[#030303] flex flex-col animate-in slide-in-from-bottom duration-300">
+      <div className="flex items-center justify-between pl-4 pr-2 pt-[calc(var(--sat)+8px)] pb-2 border-b border-white/[0.06]">
+        <h2 className="text-[1.375rem] font-bold tracking-tight text-white flex items-center gap-2">
           <SettingsIcon className="w-5 h-5 text-red-500" /> Einstellungen
         </h2>
-        <button onClick={onClose} aria-label="Schließen" className="p-2 text-zinc-300">
+        <button onClick={onClose} aria-label="Schließen" className="w-11 h-11 flex items-center justify-center rounded-full text-zinc-200 bg-white/[0.07] press">
           <X className="w-5 h-5" />
         </button>
       </div>
-      <div className="flex-1 overflow-y-auto px-4 pb-10 divide-y divide-white/5">
+      <div className="flex-1 overflow-y-auto overscroll-contain px-4 pb-safe divide-y divide-white/[0.06]">
         <section>
-          <h3 className="pt-4 text-[11px] font-bold uppercase tracking-wider text-zinc-500">Wiedergabe</h3>
+          <h3 className="pt-5 text-[0.6875rem] font-semibold uppercase tracking-[0.08em] text-zinc-500">Wiedergabe</h3>
           <Toggle
             label="Lautstärke angleichen"
             hint="Laute Songs werden auf YouTubes Referenz-Lautstärke gesenkt"
@@ -92,7 +92,7 @@ export const SettingsModal: React.FC<{ open: boolean; onClose: () => void }> = (
           />
         </section>
         <section>
-          <h3 className="pt-4 text-[11px] font-bold uppercase tracking-wider text-zinc-500">Downloads</h3>
+          <h3 className="pt-5 text-[0.6875rem] font-semibold uppercase tracking-[0.08em] text-zinc-500">Downloads</h3>
           <Toggle
             label="Nur im WLAN herunterladen"
             hint="Gilt für „Für Offline laden“ (Android erkennt das Netz)"
@@ -114,7 +114,7 @@ export const SettingsModal: React.FC<{ open: boolean; onClose: () => void }> = (
           <p className="text-[11px] text-zinc-500 -mt-1 pb-3">Wird es voll, fliegen die ältesten Offline-Songs raus.</p>
         </section>
         <section>
-          <h3 className="pt-4 text-[11px] font-bold uppercase tracking-wider text-zinc-500">Darstellung</h3>
+          <h3 className="pt-5 text-[0.6875rem] font-semibold uppercase tracking-[0.08em] text-zinc-500">Darstellung</h3>
           <Choice
             label="Schriftgröße"
             value={s.fontScale}
@@ -139,7 +139,7 @@ export const SettingsModal: React.FC<{ open: boolean; onClose: () => void }> = (
           />
         </section>
         <section className="pb-4">
-          <h3 className="pt-4 text-[11px] font-bold uppercase tracking-wider text-zinc-500">Was ist neu</h3>
+          <h3 className="pt-5 text-[0.6875rem] font-semibold uppercase tracking-[0.08em] text-zinc-500">Was ist neu</h3>
           <ul className="mt-2 space-y-1.5 text-xs text-zinc-300 list-disc pl-4">
             {CHANGELOG.map((c) => (
               <li key={c}>{c}</li>

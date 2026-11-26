@@ -8,19 +8,20 @@ import {
   Music,
   Disc,
   Moon,
-  Loader2,
-  ChevronRight
+  ChevronLeft
 } from 'lucide-react';
 import { Track } from '../types';
 import { api } from '../services/api';
 import { TrackItem } from './TrackItem';
-import { usePlayer } from '../context/PlayerContext';
+import { PlayAllBar } from './PlayAllBar';
+import { tap, useBackClose } from '../services/ui';
 
-export const ExploreView: React.FC = () => {
+/** Genre / mood tiles. `embedded`: shown inside the search tab (no own title or bottom padding). */
+export const ExploreView: React.FC<{ embedded?: boolean }> = ({ embedded }) => {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [tracks, setTracks] = useState<Track[]>([]);
   const [loading, setLoading] = useState(false);
-  const { playTrack } = usePlayer();
+  const [failed, setFailed] = useState(false);
 
   const categories = [
     {
@@ -89,89 +90,122 @@ export const ExploreView: React.FC = () => {
     },
   ];
 
+  const loadTokenRef = React.useRef(0);
   const handleSelect = async (cat: typeof categories[0]) => {
+    tap();
+    const token = ++loadTokenRef.current;
     setSelectedCategory(cat.name);
+    setTracks([]);
+    setFailed(false);
     setLoading(true);
     try {
       const data = await api.search(cat.query, 'songs');
-      setTracks(data);
+      if (token === loadTokenRef.current) setTracks(data);
     } catch (err) {
       console.error('Failed to load category:', err);
+      if (token === loadTokenRef.current) setFailed(true);
     } finally {
-      setLoading(false);
+      if (token === loadTokenRef.current) setLoading(false);
     }
   };
+  const closeCategory = () => {
+    loadTokenRef.current++;
+    setSelectedCategory(null);
+    setLoading(false);
+  };
+  useBackClose(!!selectedCategory, closeCategory);
+  const selected = categories.find((c) => c.name === selectedCategory);
+
+  // one category open: its songs, with a way back to the grid
+  if (selected) {
+    const Icon = selected.icon;
+    return (
+      <div className={embedded ? '' : 'pb-player px-4 pt-3'}>
+        <div className={`relative overflow-hidden rounded-3xl bg-gradient-to-br ${selected.color} p-4 mb-4 shadow-float`}>
+          <button
+            onClick={closeCategory}
+            aria-label="Zurück zu den Kategorien"
+            className="relative z-10 -ml-1 -mt-1 mb-3 h-9 pl-1.5 pr-3.5 rounded-full bg-black/25 flex items-center space-x-1 text-[0.8125rem] font-semibold text-white press"
+          >
+            <ChevronLeft className="w-5 h-5" />
+            <span>Alle Kategorien</span>
+          </button>
+          <div className="relative z-10 flex items-center">
+            <span className="w-12 h-12 rounded-2xl bg-white/15 flex items-center justify-center flex-shrink-0">
+              <Icon className="w-6 h-6 text-white" />
+            </span>
+            <div className="min-w-0 ml-3">
+              <h2 className="text-[1.375rem] leading-tight font-extrabold tracking-tight text-white">{selected.name}</h2>
+              <p className="text-[0.8125rem] text-white/75 mt-0.5">{selected.desc}</p>
+            </div>
+          </div>
+          <div className="absolute -right-6 -bottom-8 w-32 h-32 rounded-full bg-white/10 blur-2xl pointer-events-none" />
+        </div>
+
+        {loading ? (
+          <div className="space-y-2" aria-label="Lädt">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="flex items-center h-16 px-2">
+                <div className="w-12 h-12 rounded-xl skeleton" />
+                <div className="ml-3 flex-1 space-y-2">
+                  <div className="h-3.5 w-2/3 rounded-full skeleton" />
+                  <div className="h-3 w-1/3 rounded-full skeleton" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : failed ? (
+          <div className="text-center py-12 text-zinc-400 text-sm space-y-3">
+            <div>Laden fehlgeschlagen – Internetverbindung prüfen.</div>
+            <button
+              onClick={() => handleSelect(selected)}
+              className="h-10 px-5 rounded-full bg-white/10 text-white text-sm font-semibold press"
+            >
+              Nochmal versuchen
+            </button>
+          </div>
+        ) : (
+          <>
+            <PlayAllBar tracks={tracks} />
+            <div className="space-y-0.5 -mx-2">
+              {tracks.map((track, i) => (
+                <TrackItem key={`${track.id}-${i}`} track={track} index={i + 1} playlistContext={tracks} />
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    );
+  }
 
   return (
-    <div className="pb-36 px-4 space-y-5 pt-2">
-      <div>
-        <h2 className="text-2xl font-black tracking-tight text-white">
-          Entdecken
-        </h2>
-        <p className="text-xs text-zinc-400 mt-0.5">
-          Stimmungen, Genres und kuratierte Playlists
-        </p>
-      </div>
+    <div className={embedded ? '' : 'pb-player px-4 pt-3'}>
+      {!embedded && (
+        <div className="mb-5">
+          <h2 className="text-[1.75rem] leading-tight font-extrabold tracking-tight text-white">Entdecken</h2>
+          <p className="text-[0.8125rem] text-zinc-500 mt-0.5">Stimmungen, Genres und kuratierte Playlists</p>
+        </div>
+      )}
 
       {/* Category Grid */}
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
         {categories.map((cat) => {
           const Icon = cat.icon;
-          const isSelected = selectedCategory === cat.name;
           return (
             <button
               key={cat.id}
               onClick={() => handleSelect(cat)}
-              className={`relative overflow-hidden rounded-2xl p-4 text-left bg-gradient-to-br ${cat.color} border transition active:scale-95 shadow-lg ${
-                isSelected ? 'border-white scale-[1.02]' : 'border-white/10 hover:border-white/20'
-              }`}
+              className={`relative overflow-hidden rounded-3xl p-4 h-[6.5rem] text-left bg-gradient-to-br ${cat.color} press shadow-float flex flex-col justify-between`}
             >
-              <div className="relative z-10">
-                <Icon className="w-6 h-6 text-white mb-2" />
-                <h3 className="text-sm font-bold text-white leading-tight">
-                  {cat.name}
-                </h3>
-                <p className="text-[11px] text-white/70 line-clamp-1 mt-0.5">
-                  {cat.desc}
-                </p>
+              <Icon className="relative z-10 w-6 h-6 text-white/90" />
+              <div className="relative z-10 min-w-0">
+                <h3 className="text-[0.9375rem] font-bold text-white leading-tight line-clamp-2">{cat.name}</h3>
               </div>
-              <div className="absolute -right-4 -bottom-4 w-16 h-16 rounded-full bg-white/10 blur-xl pointer-events-none" />
+              <div className="absolute -right-5 -bottom-5 w-20 h-20 rounded-full bg-white/10 blur-xl pointer-events-none" />
             </button>
           );
         })}
       </div>
-
-      {/* Selected category track list */}
-      {selectedCategory && (
-        <div className="mt-6">
-          <div className="flex items-center justify-between mb-3 border-b border-white/5 pb-2">
-            <h3 className="text-base font-bold text-white flex items-center space-x-2">
-              <span>{selectedCategory}</span>
-            </h3>
-            <span className="text-xs text-zinc-500">
-              {tracks.length} Titel gefunden
-            </span>
-          </div>
-
-          {loading ? (
-            <div className="flex flex-col items-center justify-center py-12 text-zinc-500 space-y-2">
-              <Loader2 className="w-7 h-7 animate-spin text-red-500" />
-              <span className="text-xs">Lade {selectedCategory}...</span>
-            </div>
-          ) : (
-            <div className="space-y-1">
-              {tracks.map((track, i) => (
-                <TrackItem
-                  key={`${track.id}-${i}`}
-                  track={track}
-                  index={i + 1}
-                  playlistContext={tracks}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 };

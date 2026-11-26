@@ -37,8 +37,10 @@ import {
 import { usePlayer, usePlaybackTime } from '../context/PlayerContext';
 import { api } from '../services/api';
 import { EqualizerPreset } from '../types';
-import { tap, toast } from '../services/ui';
+import { tap, toast, useBackClose } from '../services/ui';
 import { useSettings } from '../services/settings';
+import { Sheet, SheetItem } from './Sheet';
+import { Switch } from './Primitives';
 
 interface LyricLine {
   time: number;
@@ -121,6 +123,13 @@ export const NowPlayingModal: React.FC = () => {
   const currentTime = usePlaybackTime();
 
   const [activeTab, setActiveTab] = useState<'queue' | 'lyrics' | 'eq'>('queue');
+  // queue / lyrics / studio live in a panel that slides up over the player
+  const [panelOpen, setPanelOpen] = useState(false);
+  useBackClose(panelOpen && isPlayerExpanded, () => setPanelOpen(false));
+  const panelTouchRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!isPlayerExpanded) setPanelOpen(false);
+  }, [isPlayerExpanded]);
   const [lyrics, setLyrics] = useState<string | null>(null);
   const [syncedLines, setSyncedLines] = useState<LyricLine[]>([]);
   const [isSynced, setIsSynced] = useState<boolean>(false);
@@ -193,12 +202,18 @@ export const NowPlayingModal: React.FC = () => {
   // Auto-scroll active lyric line into view smoothly
   useEffect(() => {
     if (activeTab === 'lyrics' && isSynced && activeLyricRef.current) {
-      activeLyricRef.current.scrollIntoView({
-        behavior: 'smooth',
-        block: 'center',
-      });
+      const box = lyricsScrollContainerRef.current;
+      const el = activeLyricRef.current;
+      if (box) {
+        const top = el.offsetTop - box.clientHeight / 2 + el.clientHeight / 2;
+        try {
+          box.scrollTo({ top, behavior: 'smooth' });
+        } catch {
+          box.scrollTop = top;
+        }
+      }
     }
-  }, [activeLyricIndex, activeTab, isSynced]);
+  }, [activeLyricIndex, activeTab, isSynced, panelOpen]);
 
   if (!isPlayerExpanded || !currentTrack) return null;
 
@@ -219,6 +234,14 @@ export const NowPlayingModal: React.FC = () => {
     } else if (dy > 90 && dy > Math.abs(dx) * 1.5) {
       setIsPlayerExpanded(false);
     }
+  };
+
+  const onHeaderTouchEnd = (e: React.TouchEvent) => {
+    const s0 = coverTouchRef.current;
+    coverTouchRef.current = null;
+    if (!s0) return;
+    const dy = e.changedTouches[0].clientY - s0.y;
+    if (dy > 70 && dy > Math.abs(e.changedTouches[0].clientX - s0.x) * 1.5) setIsPlayerExpanded(false);
   };
 
   // double tap on the cover = like (with a heart pop)
@@ -306,31 +329,45 @@ export const NowPlayingModal: React.FC = () => {
     { id: 'flat', label: 'Flat (Original)' },
   ];
 
+  const ctrlBtn = 'flex items-center justify-center rounded-full press';
+  const pillBtn = (on: boolean) =>
+    `h-10 px-4 rounded-full flex items-center space-x-1.5 text-[0.8125rem] font-semibold flex-shrink-0 press ${
+      on ? 'bg-white text-black' : 'bg-white/[0.1] text-white hover:bg-white/[0.16]'
+    }`;
+
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-[#030303] text-white select-none overflow-hidden animate-in fade-in duration-200">
-      {/* Dynamic ambient background glow */}
+    <div className="fixed inset-0 z-50 flex flex-col bg-[#030303] text-white select-none overflow-hidden animate-in slide-in-from-bottom duration-300">
+      {/* Backdrop tinted by the cover (blur is skipped in battery-saver mode) */}
       <div className="absolute inset-0 pointer-events-none overflow-hidden">
-        <div
-          className="absolute -top-36 -left-36 w-[150vw] h-[65vh] rounded-full blur-[130px] opacity-25 transition-all duration-1000"
-          style={{
-            backgroundImage: `radial-gradient(circle, #e11d48, #3b0764, transparent)`,
-          }}
+        <img
+          key={currentTrack.thumbnail}
+          src={currentTrack.thumbnail}
+          alt=""
+          aria-hidden
+          className="absolute left-1/2 top-0 w-[160%] max-w-none -translate-x-1/2 aspect-square object-cover blur-[90px] opacity-70 animate-in fade-in duration-500"
         />
-        <div className="absolute inset-0 bg-gradient-to-b from-transparent via-[#030303]/85 to-[#030303]" />
+        <div className="absolute inset-0 bg-gradient-to-b from-black/30 via-[#030303]/80 to-[#030303]" />
       </div>
 
       {/* Car Mode Fullscreen Overlay */}
       {isCarMode && (
         <div className="fixed inset-0 z-[60] bg-[#070707] flex flex-col justify-between p-6 select-none animate-in fade-in duration-200">
+          <img
+            src={currentTrack.thumbnail}
+            alt=""
+            aria-hidden
+            className="absolute inset-0 w-full h-full object-cover blur-[80px] opacity-40 pointer-events-none"
+          />
+          <div className="absolute inset-0 bg-black/50 pointer-events-none" />
           {/* Car Mode Header */}
-          <div className="flex items-center justify-between pt-[max(var(--sat),12px)]">
+          <div className="relative flex items-center justify-between pt-[max(var(--sat),12px)]">
             <div className="flex items-center space-x-2 text-red-500 font-black tracking-wider uppercase text-sm">
               <Car className="w-5 h-5" />
               <span>550 Fahrmodus</span>
             </div>
             <button
               onClick={() => setIsCarMode(false)}
-              className="flex items-center space-x-1.5 px-4 py-2 rounded-full bg-white/10 hover:bg-white/20 text-white font-semibold text-xs transition active:scale-95"
+              className="flex items-center space-x-1.5 h-11 px-5 rounded-full bg-white/10 hover:bg-white/20 text-white font-semibold text-sm press"
             >
               <X className="w-4 h-4" />
               <span>Beenden</span>
@@ -338,50 +375,30 @@ export const NowPlayingModal: React.FC = () => {
           </div>
 
           {/* Huge Car Cover & Metadata */}
-          <div className="flex flex-col items-center text-center my-auto px-4">
-            <div className="w-56 h-56 sm:w-72 sm:h-72 rounded-3xl overflow-hidden shadow-2xl shadow-red-950/50 border-2 border-white/15 mb-5">
-              <img
-                src={currentTrack.thumbnail}
-                alt={currentTrack.title}
-                className="w-full h-full object-cover"
-              />
+          <div className="relative flex flex-col items-center text-center my-auto px-4">
+            <div className="w-56 h-56 sm:w-72 sm:h-72 rounded-3xl overflow-hidden shadow-2xl shadow-black/70 mb-6">
+              <img src={currentTrack.thumbnail} alt={currentTrack.title} className="w-full h-full object-cover" />
             </div>
             <h2 className="text-2xl sm:text-3xl font-black text-white truncate max-w-sm tracking-tight">
               {currentTrack.title}
             </h2>
-            <p className="text-base sm:text-lg text-zinc-400 truncate max-w-sm mt-1 font-medium">
-              {currentTrack.artist}
-            </p>
+            <p className="text-base sm:text-lg text-zinc-400 truncate max-w-sm mt-1 font-medium">{currentTrack.artist}</p>
           </div>
 
           {/* Giant Touch-Friendly Car Controls */}
-          <div className="space-y-6 pb-6">
+          <div className="relative space-y-6 pb-6">
             <div className="flex items-center justify-center space-x-8">
-              <button
-                onClick={previousTrack}
-                className="p-5 rounded-full bg-white/10 hover:bg-white/20 text-white active:scale-90 transition"
-                title="Vorheriger Titel"
-              >
+              <button onClick={previousTrack} className="p-5 rounded-full bg-white/10 text-white press" title="Vorheriger Titel">
                 <SkipBack className="w-9 h-9 fill-current" />
               </button>
-
               <button
                 onClick={togglePlay}
-                className="p-7 rounded-full bg-red-600 hover:bg-red-500 text-white active:scale-95 shadow-2xl shadow-red-600/50 transition"
-                title={isPlaying ? "Pause" : "Play"}
+                className="p-7 rounded-full bg-white text-black shadow-2xl shadow-black/60 press"
+                title={isPlaying ? 'Pause' : 'Play'}
               >
-                {isPlaying ? (
-                  <Pause className="w-12 h-12 fill-white" />
-                ) : (
-                  <Play className="w-12 h-12 fill-white ml-1" />
-                )}
+                {isPlaying ? <Pause className="w-12 h-12 fill-black" /> : <Play className="w-12 h-12 fill-black ml-1" />}
               </button>
-
-              <button
-                onClick={nextTrack}
-                className="p-5 rounded-full bg-white/10 hover:bg-white/20 text-white active:scale-90 transition"
-                title="Nächster Titel"
-              >
+              <button onClick={nextTrack} className="p-5 rounded-full bg-white/10 text-white press" title="Nächster Titel">
                 <SkipForward className="w-9 h-9 fill-current" />
               </button>
             </div>
@@ -390,43 +407,45 @@ export const NowPlayingModal: React.FC = () => {
             <div className="flex items-center justify-around max-w-xs mx-auto border-t border-white/10 pt-4">
               <button
                 onClick={() => toggleLike(currentTrack)}
-                className={`p-3 rounded-full active:scale-90 transition ${
-                  liked ? 'text-red-500 bg-red-500/15' : 'text-zinc-400 bg-white/5'
-                }`}
+                className={`p-4 rounded-full press ${liked ? 'text-red-500 bg-red-500/15' : 'text-zinc-300 bg-white/[0.08]'}`}
                 title="Gefällt mir"
               >
-                <ThumbsUp className={`w-6 h-6 ${liked ? 'fill-current' : ''}`} />
+                <ThumbsUp className={`w-7 h-7 ${liked ? 'fill-current' : ''}`} />
               </button>
-
               <button
                 onClick={toggleMute}
-                className="p-3 rounded-full bg-white/5 text-zinc-300 active:scale-90 transition"
-                title={isMuted ? "Stummschaltung aufheben" : "Stumm"}
+                className="p-4 rounded-full bg-white/[0.08] text-zinc-300 press"
+                title={isMuted ? 'Stummschaltung aufheben' : 'Stumm'}
               >
-                {isMuted ? <VolumeX className="w-6 h-6 text-red-500" /> : <Volume2 className="w-6 h-6" />}
+                {isMuted ? <VolumeX className="w-7 h-7 text-red-500" /> : <Volume2 className="w-7 h-7" />}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Top Bar: 1:1 YouTube Music Player Header */}
-      <header className="relative z-10 flex items-center justify-between px-4 pt-[max(var(--sat),12px)] pb-1">
-        {/* Minimize Chevron */}
+      {/* Top bar (swipe down here or on the cover = close) */}
+      <header
+        className="relative z-10 flex items-center justify-between px-2 pb-1"
+        style={{ paddingTop: 'max(var(--sat), 0.75rem)' }}
+        onTouchStart={onCoverTouchStart}
+        onTouchEnd={onHeaderTouchEnd}
+      >
         <button
           onClick={() => setIsPlayerExpanded(false)}
-          className="p-2 text-zinc-300 hover:text-white rounded-full active:scale-90 transition"
+          className={`w-11 h-11 text-white ${ctrlBtn} hover:bg-white/10`}
+          aria-label="Minimieren"
           title="Minimieren"
         >
           <ChevronDown className="w-7 h-7" />
         </button>
 
-        {/* 1:1 Song | Video Switcher Pill */}
-        <div className="flex items-center bg-[#212121] p-0.5 rounded-full border border-white/10 shadow-inner">
+        {/* Song | Video switch */}
+        <div className="flex items-center bg-white/[0.1] p-1 rounded-full">
           <button
             onClick={() => setIsVideoMode(false)}
-            className={`flex items-center space-x-1 px-3 py-1 rounded-full text-xs font-semibold transition ${
-              !isVideoMode ? 'bg-white text-black shadow' : 'text-zinc-400 hover:text-white'
+            className={`flex items-center space-x-1.5 h-8 px-3.5 rounded-full text-[0.8125rem] font-semibold transition-colors ${
+              !isVideoMode ? 'bg-white text-black shadow' : 'text-white/70 hover:text-white'
             }`}
           >
             <Music2 className="w-3.5 h-3.5" />
@@ -434,8 +453,8 @@ export const NowPlayingModal: React.FC = () => {
           </button>
           <button
             onClick={() => setIsVideoMode(true)}
-            className={`flex items-center space-x-1 px-3 py-1 rounded-full text-xs font-semibold transition ${
-              isVideoMode ? 'bg-white text-black shadow' : 'text-zinc-400 hover:text-white'
+            className={`flex items-center space-x-1.5 h-8 px-3.5 rounded-full text-[0.8125rem] font-semibold transition-colors ${
+              isVideoMode ? 'bg-white text-black shadow' : 'text-white/70 hover:text-white'
             }`}
           >
             <Video className="w-3.5 h-3.5" />
@@ -443,85 +462,80 @@ export const NowPlayingModal: React.FC = () => {
           </button>
         </div>
 
-        {/* Actions: Fahrmodus & Sleep Timer */}
-        <div className="flex items-center space-x-1">
-          {/* Fahrmodus button */}
+        <div className="flex items-center">
           <button
             onClick={() => setIsCarMode(true)}
-            className="p-2 text-zinc-300 hover:text-white rounded-full active:scale-90 transition"
+            className={`w-11 h-11 text-white/80 ${ctrlBtn} hover:bg-white/10`}
+            aria-label="Fahrmodus"
             title="Fahrmodus"
           >
-            <Car className="w-5 h-5" />
+            <Car className="w-[1.375rem] h-[1.375rem]" />
           </button>
-
-          {/* Sleep Timer */}
           <button
-            onClick={() => setShowSleepMenu(!showSleepMenu)}
-            className={`p-2 rounded-full active:scale-90 transition ${
-              sleepTimerRemaining || sleepAtTrackEnd ? 'bg-red-600 text-white' : 'text-zinc-300 hover:text-white'
+            onClick={() => setShowSleepMenu(true)}
+            className={`relative w-11 h-11 ${ctrlBtn} ${
+              sleepTimerRemaining || sleepAtTrackEnd ? 'text-red-400 bg-red-500/15' : 'text-white/80 hover:bg-white/10'
             }`}
+            aria-label="Schlaf-Timer"
             title="Schlaf-Timer"
           >
-            <Clock className="w-5 h-5" />
+            <Clock className="w-[1.375rem] h-[1.375rem]" />
           </button>
         </div>
-
-        {/* Sleep Menu Popup */}
-        {showSleepMenu && (
-          <>
-            <div className="fixed inset-0 z-40" onClick={() => setShowSleepMenu(false)} />
-            <div className="absolute right-4 top-14 z-50 w-52 bg-[#1c1c1c] border border-white/10 rounded-2xl shadow-2xl p-2 backdrop-blur-xl">
-              <div className="text-xs font-semibold px-3 py-1.5 text-zinc-400 border-b border-white/5">
-                Schlaf-Timer {sleepTimerRemaining ? `(${Math.ceil(sleepTimerRemaining / 60)}m)` : sleepAtTrackEnd ? '(Titelende)' : ''}
-              </div>
-              {[15, 30, 45, 60].map((mins) => (
-                <button
-                  key={mins}
-                  onClick={() => {
-                    setSleepTimer(mins);
-                    setShowSleepMenu(false);
-                  }}
-                  className="w-full text-left px-3 py-2 text-xs text-zinc-200 hover:bg-white/10 rounded-lg flex items-center justify-between"
-                >
-                  <span>{mins} Minuten</span>
-                  {sleepTimerRemaining && Math.round(sleepTimerRemaining / 60) === mins && (
-                    <Check className="w-4 h-4 text-red-500" />
-                  )}
-                </button>
-              ))}
-              <button
-                onClick={() => {
-                  setSleepAtTrackEnd(!sleepAtTrackEnd);
-                  setShowSleepMenu(false);
-                }}
-                className="w-full text-left px-3 py-2 text-xs text-zinc-200 hover:bg-white/10 rounded-lg flex items-center justify-between"
-              >
-                <span>Ende des Titels</span>
-                {sleepAtTrackEnd && <Check className="w-4 h-4 text-red-500" />}
-              </button>
-              {(sleepTimerRemaining || sleepAtTrackEnd) && (
-                <button
-                  onClick={() => {
-                    setSleepTimer(null);
-                    setShowSleepMenu(false);
-                  }}
-                  className="w-full text-left px-3 py-2 text-xs text-red-400 hover:bg-red-500/10 rounded-lg mt-1"
-                >
-                  Timer ausschalten
-                </button>
-              )}
-            </div>
-          </>
-        )}
       </header>
 
-      {/* Main Center Area: Artwork or Video */}
-      <div className="relative z-10 flex-1 flex flex-col justify-between px-6 py-2 overflow-y-auto">
-        {/* Media Box */}
-        <div className="w-full max-w-[340px] aspect-square mx-auto my-auto relative">
+      <Sheet
+        open={showSleepMenu}
+        onClose={() => setShowSleepMenu(false)}
+        title={`Schlaf-Timer${
+          sleepTimerRemaining ? ` · noch ${Math.ceil(sleepTimerRemaining / 60)} Min.` : sleepAtTrackEnd ? ' · Titelende' : ''
+        }`}
+      >
+        {[15, 30, 45, 60].map((mins) => (
+          <SheetItem
+            key={mins}
+            icon={Clock}
+            label={`${mins} Minuten`}
+            active={!!sleepTimerRemaining && Math.round(sleepTimerRemaining / 60) === mins}
+            onClick={() => {
+              setSleepTimer(mins);
+              setShowSleepMenu(false);
+            }}
+          />
+        ))}
+        <SheetItem
+          icon={Music2}
+          label="Ende des Titels"
+          active={sleepAtTrackEnd}
+          onClick={() => {
+            setSleepAtTrackEnd(!sleepAtTrackEnd);
+            setShowSleepMenu(false);
+          }}
+        />
+        {(sleepTimerRemaining || sleepAtTrackEnd) && (
+          <SheetItem
+            icon={X}
+            danger
+            label="Timer ausschalten"
+            onClick={() => {
+              setSleepTimer(null);
+              setShowSleepMenu(false);
+            }}
+          />
+        )}
+      </Sheet>
+
+      {/* Main area: artwork, info, controls - sized to fit one screen */}
+      <div className="relative z-10 flex-1 min-h-0 w-full max-w-xl mx-auto px-6 pt-1 overflow-y-auto overscroll-contain scrollbar-none">
+        {/* spreads out when there is room, scrolls from the top when there is not (landscape) */}
+        <div className="min-h-full flex flex-col justify-evenly space-y-3">
+        {/* Media Box: shrinks on short screens so the controls always fit */}
+        <div
+          className="w-full aspect-square mx-auto relative flex-shrink-0"
+          style={{ maxWidth: 'min(380px, 100%, max(8rem, calc(100vh - 31rem - var(--sat) - var(--sab))))' }}
+        >
           {isVideoMode ? (
-            /* Video Mode Player */
-            <div className="w-full h-full rounded-2xl overflow-hidden shadow-2xl bg-black border border-white/10">
+            <div className="w-full h-full rounded-3xl overflow-hidden shadow-2xl bg-black">
               <iframe
                 src={`https://www.youtube.com/embed/${currentTrack.id}?autoplay=1&playsinline=1`}
                 title={currentTrack.title}
@@ -531,127 +545,62 @@ export const NowPlayingModal: React.FC = () => {
               />
             </div>
           ) : (
-            /* Album Artwork with Soft Shadow & Audio Visualizer */
-            <div className="w-full h-full relative flex flex-col justify-center">
-              <div
-                onClick={onCoverTap}
-                onTouchStart={onCoverTouchStart}
-                onTouchEnd={onCoverTouchEnd}
-                className="relative w-full h-full rounded-2xl overflow-hidden shadow-2xl shadow-black/90 bg-zinc-900 border border-white/10"
-              >
-                {heartPop > 0 && (
-                  <div key={heartPop} className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none animate-ping">
-                    <Heart className="w-24 h-24 text-white fill-red-500 drop-shadow-2xl" />
-                  </div>
-                )}
-                <img
-                  src={currentTrack.thumbnail}
-                  alt={currentTrack.title}
-                  className={`w-full h-full object-cover transition-transform duration-1000 ${
-                    isPlaying ? 'scale-100' : 'scale-95 brightness-90'
-                  }`}
-                />
-                {isBuffering && (
-                  <div className="absolute inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center">
-                    <Loader2 className="w-12 h-12 text-white animate-spin" />
-                  </div>
-                )}
-              </div>
-
-              {/* 550 Dynamic Audio Waveform Visualizer */}
-              <div className="flex items-end justify-center space-x-1 h-5 mt-2.5 px-4">
-                {[45, 80, 100, 65, 90, 50, 85, 100, 70, 95, 60, 85, 75, 45, 90, 60].map((baseHeight, idx) => {
-                  const factor = isPlaying ? ((Math.floor(currentTime * 4) + idx) % 5 + 1) / 5 : 0.2;
-                  const currentH = Math.max(15, baseHeight * factor);
-                  return (
-                    <div
-                      key={idx}
-                      className="w-1 bg-gradient-to-t from-red-600 to-rose-400 rounded-full transition-all duration-200"
-                      style={{
-                        height: `${currentH}%`,
-                        opacity: isPlaying ? 0.85 : 0.25
-                      }}
-                    />
-                  );
-                })}
-              </div>
+            <div
+              onClick={onCoverTap}
+              onTouchStart={onCoverTouchStart}
+              onTouchEnd={onCoverTouchEnd}
+              className={`relative w-full h-full rounded-3xl overflow-hidden bg-white/[0.06] shadow-[0_24px_60px_-12px_rgba(0,0,0,0.85)] transition-transform duration-500 ${
+                isPlaying ? 'scale-100' : 'scale-[0.92]'
+              }`}
+              style={{ transitionTimingFunction: 'var(--ease-spring)' }}
+            >
+              {heartPop > 0 && (
+                <div key={heartPop} className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none animate-ping">
+                  <Heart className="w-24 h-24 text-white fill-red-500 drop-shadow-2xl" />
+                </div>
+              )}
+              <img
+                key={currentTrack.id}
+                src={currentTrack.thumbnail}
+                alt={currentTrack.title}
+                className="w-full h-full object-cover animate-in fade-in zoom-in-95 duration-300"
+              />
+              {isBuffering && (
+                <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                  <Loader2 className="w-12 h-12 text-white animate-spin" />
+                </div>
+              )}
             </div>
           )}
         </div>
 
-        {/* Title & Artist */}
-        <div className="mt-2">
-          <div className="flex items-center justify-between">
-            <div className="min-w-0 flex-1 mr-3">
-              <h1 className="text-xl sm:text-2xl font-bold text-white truncate tracking-tight">
-                {currentTrack.title}
-              </h1>
-              <p className="text-sm sm:text-base text-zinc-400 truncate mt-0.5">
-                {currentTrack.artist}
-              </p>
+        {/* Title & Artist + like */}
+        <div className="flex items-center">
+          <div className="min-w-0 flex-1 mr-2">
+            <h1 className="text-[1.5rem] leading-tight font-bold text-white truncate tracking-tight">{currentTrack.title}</h1>
+            <div className="flex items-center mt-1 min-w-0">
+              <p className="text-base text-white/60 truncate">{currentTrack.artist}</p>
+              <span className="ml-2 flex-shrink-0 text-[0.625rem] font-bold tracking-wide text-white/50 bg-white/[0.08] px-1.5 py-0.5 rounded">
+                {audioQuality === 'high' ? 'HQ' : '128k'}
+              </span>
             </div>
-            {/* 550 Hi-Res Badge */}
-            <span className="text-[10px] font-mono text-zinc-400 bg-white/5 px-2 py-0.5 rounded border border-white/10">
-              {audioQuality === 'high' ? 'HQ 256k' : '128k'}
-            </span>
           </div>
-
-          {/* 1:1 YouTube Music Action Row (Thumbs Up, Thumbs Down, Save, Share, Download) */}
-          <div className="flex items-center justify-between mt-2.5 px-2 border-y border-white/5 py-1.5">
-            {/* Thumbs Up (Like) */}
-            <button
-              onClick={() => toggleLike(currentTrack)}
-              className={`p-2 rounded-full active:scale-90 transition flex items-center space-x-1 ${
-                liked ? 'text-red-500' : 'text-zinc-400 hover:text-white'
-              }`}
-              title="Gefällt mir"
-            >
-              <ThumbsUp className={`w-5 h-5 ${liked ? 'fill-current' : ''}`} />
-            </button>
-
-            {/* Thumbs Down (Dislike) */}
-            <button
-              onClick={() => toggleDislike(currentTrack.id)}
-              className={`p-2 rounded-full active:scale-90 transition ${
-                disliked ? 'text-red-500' : 'text-zinc-400 hover:text-white'
-              }`}
-              title="Gefällt mir nicht"
-            >
-              <ThumbsDown className={`w-5 h-5 ${disliked ? 'fill-current' : ''}`} />
-            </button>
-
-            {/* Offline Download */}
-            <button
-              onClick={handleDownload}
-              disabled={isDownloading || downloaded}
-              className={`p-2 rounded-full active:scale-90 transition ${
-                downloaded ? 'text-emerald-400' : 'text-zinc-400 hover:text-white'
-              }`}
-              title="Für Offline speichern"
-            >
-              {isDownloading ? (
-                <Loader2 className="w-5 h-5 text-red-500 animate-spin" />
-              ) : downloaded ? (
-                <Check className="w-5 h-5 text-emerald-400" />
-              ) : (
-                <Download className="w-5 h-5" />
-              )}
-            </button>
-
-            {/* Share */}
-            <button
-              onClick={handleShare}
-              className="p-2 rounded-full text-zinc-400 hover:text-white active:scale-90 transition"
-              title="Teilen"
-            >
-              <Share2 className="w-5 h-5" />
-            </button>
-          </div>
+          <button
+            onClick={() => {
+              tap();
+              toggleLike(currentTrack);
+            }}
+            className={`w-12 h-12 -mr-2 flex-shrink-0 ${ctrlBtn} ${liked ? 'text-red-500' : 'text-white/80'}`}
+            aria-label={liked ? 'Gefällt mir entfernen' : 'Gefällt mir'}
+            title="Gefällt mir"
+          >
+            <Heart className={`w-7 h-7 ${liked ? 'fill-current' : ''}`} />
+          </button>
         </div>
 
-        {/* Custom Progress Scrubber */}
-        <div className="mt-2.5">
-          <div className="relative flex items-center h-5 group">
+        {/* Progress scrubber: 32px tall touch area, thin visual track */}
+        <div>
+          <div className={`relative flex items-center h-8 group ${isScrubbing ? 'scrubbing' : ''}`}>
             <input
               type="range"
               min={0}
@@ -663,105 +612,149 @@ export const NowPlayingModal: React.FC = () => {
               onMouseUp={handleSeekEnd}
               onTouchStart={handleSeekStart}
               onTouchEnd={handleSeekEnd}
-              className="absolute inset-0 w-full opacity-0 cursor-pointer z-10"
+              aria-label="Position"
+              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
             />
-            <div className="w-full h-1 bg-white/20 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-red-600 transition-all duration-100"
-                style={{ width: `${progressPercent}%` }}
-              />
+            <div className={`w-full rounded-full bg-white/20 overflow-hidden transition-all duration-150 ${isScrubbing ? 'h-2' : 'h-1'}`}>
+              <div className="h-full bg-white rounded-full" style={{ width: `${progressPercent}%` }} />
             </div>
             <div
-              className="absolute w-3.5 h-3.5 bg-red-500 rounded-full shadow-md pointer-events-none -ml-1.5 transition-transform group-hover:scale-125"
+              className={`absolute rounded-full bg-white shadow-md pointer-events-none transition-[width,height,margin] duration-150 ${
+                isScrubbing ? 'w-5 h-5 -ml-2.5' : 'w-3.5 h-3.5 -ml-[7px]'
+              }`}
               style={{ left: `${progressPercent}%` }}
             />
           </div>
 
-          <div className="flex justify-between items-center text-xs font-mono text-zinc-400 mt-1">
-            <span>{formatTime(currentDisplayTime)}</span>
-            <div className="flex items-center gap-2 font-sans">
+          <div className="flex justify-between items-center text-xs tabular-nums text-white/50 -mt-0.5">
+            <span className={`w-12 ${isScrubbing ? 'text-white font-semibold' : ''}`}>{formatTime(currentDisplayTime)}</span>
+            <div className="flex items-center space-x-1.5">
               <button
                 aria-label={`${seekStep} Sekunden zurück`}
                 onClick={() => seek(Math.max(0, currentTime - seekStep))}
-                className="px-2 py-0.5 rounded-full bg-white/5 text-[11px] text-zinc-300 active:scale-95"
+                className="h-7 px-2.5 rounded-full bg-white/[0.08] text-[0.75rem] font-semibold text-white/75 press"
               >
                 −{seekStep}s
               </button>
               <button
                 aria-label={`${seekStep} Sekunden vor`}
                 onClick={() => seek(Math.min(Math.max(0, duration - 1), currentTime + seekStep))}
-                className="px-2 py-0.5 rounded-full bg-white/5 text-[11px] text-zinc-300 active:scale-95"
+                className="h-7 px-2.5 rounded-full bg-white/[0.08] text-[0.75rem] font-semibold text-white/75 press"
               >
                 +{seekStep}s
               </button>
             </div>
-            <span>{formatTime(duration)}</span>
+            <span className="w-12 text-right">{formatTime(duration)}</span>
           </div>
         </div>
 
         {/* Media Controls (Shuffle, Back, Play, Forward, Repeat) */}
-        <div className="flex items-center justify-between px-2 my-1.5">
+        <div className="flex items-center justify-between -mx-2">
           <button
-            onClick={toggleShuffle}
-            className={`p-3 rounded-full active:scale-90 transition ${
-              shuffle ? 'text-red-500 bg-red-500/10' : 'text-zinc-400 hover:text-white'
-            }`}
+            onClick={() => {
+              tap();
+              toggleShuffle();
+            }}
+            className={`relative w-12 h-12 ${ctrlBtn} ${shuffle ? 'text-red-500' : 'text-white/70 hover:text-white'}`}
+            aria-label="Zufallswiedergabe"
+            aria-pressed={shuffle}
             title="Zufallswiedergabe"
           >
-            <Shuffle className="w-5 h-5" />
+            <Shuffle className="w-6 h-6" />
+            {shuffle && <span className="absolute bottom-1 w-1 h-1 rounded-full bg-red-500" />}
           </button>
 
           <button
-            onClick={previousTrack}
-            className="p-3 text-zinc-200 hover:text-white active:scale-90 transition"
+            onClick={() => {
+              tap();
+              previousTrack();
+            }}
+            className={`w-16 h-16 text-white ${ctrlBtn}`}
+            aria-label="Vorheriger Titel"
             title="Vorheriger Titel"
           >
-            <SkipBack className="w-7 h-7 fill-current" />
+            <SkipBack className="w-9 h-9 fill-current" />
           </button>
 
           <button
-            onClick={togglePlay}
+            onClick={() => {
+              tap();
+              togglePlay();
+            }}
             disabled={isBuffering}
-            className="p-5 rounded-full bg-white text-black hover:bg-zinc-200 active:scale-95 shadow-xl shadow-white/10 transition"
-            title={isPlaying ? "Pause" : "Abspielen"}
+            className={`w-[4.5rem] h-[4.5rem] bg-white text-black shadow-xl shadow-black/40 ${ctrlBtn}`}
+            aria-label={isPlaying ? 'Pause' : 'Abspielen'}
+            title={isPlaying ? 'Pause' : 'Abspielen'}
           >
-            {isPlaying ? (
-              <Pause className="w-8 h-8 fill-black" />
+            {isBuffering ? (
+              <Loader2 className="w-8 h-8 animate-spin" />
+            ) : isPlaying ? (
+              <Pause className="w-8 h-8 fill-black stroke-none" />
             ) : (
-              <Play className="w-8 h-8 fill-black ml-1" />
+              <Play className="w-8 h-8 fill-black stroke-none ml-1" />
             )}
           </button>
 
           <button
-            onClick={nextTrack}
-            className="p-3 text-zinc-200 hover:text-white active:scale-90 transition"
+            onClick={() => {
+              tap();
+              nextTrack();
+            }}
+            className={`w-16 h-16 text-white ${ctrlBtn}`}
+            aria-label="Nächster Titel"
             title="Nächster Titel"
           >
-            <SkipForward className="w-7 h-7 fill-current" />
+            <SkipForward className="w-9 h-9 fill-current" />
           </button>
 
           <button
-            onClick={cycleRepeatMode}
-            className={`p-3 rounded-full active:scale-90 transition ${
-              repeatMode !== 'off' ? 'text-red-500 bg-red-500/10' : 'text-zinc-400 hover:text-white'
-            }`}
+            onClick={() => {
+              tap();
+              cycleRepeatMode();
+            }}
+            className={`relative w-12 h-12 ${ctrlBtn} ${repeatMode !== 'off' ? 'text-red-500' : 'text-white/70 hover:text-white'}`}
+            aria-label="Wiederholen"
             title="Wiederholen"
           >
-            {repeatMode === 'one' ? <Repeat1 className="w-5 h-5" /> : <Repeat className="w-5 h-5" />}
+            {repeatMode === 'one' ? <Repeat1 className="w-6 h-6" /> : <Repeat className="w-6 h-6" />}
+            {repeatMode !== 'off' && <span className="absolute bottom-1 w-1 h-1 rounded-full bg-red-500" />}
+          </button>
+        </div>
+
+        {/* Action pills (YouTube Music style) */}
+        <div className="shelf space-x-2 -mx-6 px-6 scrollbar-none">
+          <button onClick={() => toggleDislike(currentTrack.id)} className={pillBtn(disliked)} aria-label="Gefällt mir nicht" title="Gefällt mir nicht">
+            <ThumbsDown className={`w-4 h-4 ${disliked ? 'fill-current' : ''}`} />
+          </button>
+          <button onClick={handleDownload} disabled={isDownloading || downloaded} className={pillBtn(false)} title="Für Offline speichern">
+            {isDownloading ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : downloaded ? (
+              <Check className="w-4 h-4 text-emerald-400" />
+            ) : (
+              <Download className="w-4 h-4" />
+            )}
+            <span>{downloaded ? 'Offline' : isDownloading ? 'Lädt…' : 'Download'}</span>
+          </button>
+          <button onClick={handleShare} className={pillBtn(false)} title="Teilen">
+            <Share2 className="w-4 h-4" />
+            <span>Teilen</span>
           </button>
         </div>
 
         {/* DJ mode: automatic beat-matched mixing into the next track */}
-        <div className="flex items-center justify-between gap-3 mx-1 mb-2 px-3 py-2 rounded-xl bg-white/5 border border-white/10">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <Disc3
-              className={`w-5 h-5 flex-shrink-0 ${djMode ? 'text-red-500' : 'text-zinc-500'} ${
-                djStatus.phase === 'mixing' ? 'animate-spin' : ''
+        <div className="flex items-center justify-between pl-3 pr-2 py-0.5 rounded-2xl bg-white/[0.06]">
+          <div className="flex items-center min-w-0">
+            <span
+              className={`w-9 h-9 mr-3 rounded-full flex items-center justify-center flex-shrink-0 ${
+                djMode ? 'bg-red-500/15 text-red-400' : 'bg-white/[0.06] text-zinc-500'
               }`}
-            />
+            >
+              <Disc3 className={`w-5 h-5 ${djStatus.phase === 'mixing' ? 'animate-spin' : ''}`} />
+            </span>
             <div className="min-w-0">
-              <div className="text-xs font-bold text-white">DJ-Modus</div>
-              <div className="text-[11px] text-zinc-400 truncate">
+              <div className="text-sm font-semibold text-white">DJ-Modus</div>
+              <div className="text-xs text-white/50 truncate">
                 {!djMode
                   ? 'Mixt automatisch in den nächsten Song'
                   : djStatus.phase === 'analyzing'
@@ -778,77 +771,113 @@ export const NowPlayingModal: React.FC = () => {
               </div>
             </div>
           </div>
-          <button
-            onClick={() => setDjMode(!djMode)}
-            className={`w-10 h-6 flex-shrink-0 rounded-full p-0.5 transition-colors ${djMode ? 'bg-red-600' : 'bg-zinc-700'}`}
-            title="DJ-Modus"
-          >
-            <div
-              className={`w-5 h-5 rounded-full bg-white transition-transform ${djMode ? 'translate-x-4' : 'translate-x-0'}`}
-            />
-          </button>
+          <Switch on={djMode} onChange={setDjMode} label="DJ-Modus" />
         </div>
 
-        {/* Bottom Drawer Tabs: Queue vs Karaoke Lyrics vs 550 Equalizer */}
-        <div className="border-t border-white/10 pt-2">
-          <div className="flex items-center justify-around border-b border-white/5 pb-2">
-            <button
-              onClick={() => setActiveTab('queue')}
-              className={`flex items-center space-x-1.5 text-xs font-semibold tracking-wider uppercase pb-1 transition ${
-                activeTab === 'queue' ? 'text-white border-b-2 border-red-500' : 'text-zinc-500 hover:text-zinc-300'
-              }`}
-            >
-              <ListMusic className="w-4 h-4" />
-              <span>Nächste Titel ({queue.length})</span>
-            </button>
+        </div>
+      </div>
 
-            <button
-              onClick={() => setActiveTab('lyrics')}
-              className={`flex items-center space-x-1.5 text-xs font-semibold tracking-wider uppercase pb-1 transition ${
-                activeTab === 'lyrics' ? 'text-white border-b-2 border-red-500' : 'text-zinc-500 hover:text-zinc-300'
-              }`}
-            >
-              <Mic2 className="w-4 h-4 text-red-500" />
-              <span>Songtext</span>
-              {isSynced && (
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse ml-0.5" />
-              )}
-            </button>
+      {/* Pinned bottom strip: opens queue / lyrics / 550 studio */}
+      <div className="relative z-10 w-full max-w-xl mx-auto px-4 pt-2 pb-safe">
+        <div className="flex items-center p-1 rounded-full bg-white/[0.08]">
+          {(
+            [
+              { id: 'queue', icon: ListMusic, label: 'Als Nächstes' },
+              { id: 'lyrics', icon: Mic2, label: 'Songtext' },
+              { id: 'eq', icon: Sliders, label: 'Studio' },
+            ] as const
+          ).map((t) => {
+            const Icon = t.icon;
+            return (
+              <button
+                key={t.id}
+                onClick={() => {
+                  tap();
+                  setActiveTab(t.id);
+                  setPanelOpen(true);
+                }}
+                className="flex-1 min-w-0 h-11 rounded-full flex items-center justify-center space-x-1.5 text-[0.8125rem] font-semibold text-white/75 hover:text-white active:bg-white/10"
+              >
+                <Icon className="w-4 h-4 flex-shrink-0" />
+                <span className="truncate">{t.label}</span>
+                {t.id === 'lyrics' && isSynced && <span className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-emerald-400" />}
+              </button>
+            );
+          })}
+        </div>
+      </div>
 
-            {/* The 550 Pro Equalizer Tab */}
-            <button
-              onClick={() => setActiveTab('eq')}
-              className={`flex items-center space-x-1 text-xs font-semibold tracking-wider uppercase pb-1 transition ${
-                activeTab === 'eq' ? 'text-red-400 border-b-2 border-red-500' : 'text-zinc-500 hover:text-zinc-300'
-              }`}
-            >
-              <Sliders className="w-4 h-4" />
-              <span>550 Studio</span>
-            </button>
+      {/* Slide-up panel (swipe down on its top bar, the chevron or the back button closes it) */}
+      {panelOpen && (
+        <div
+          className="absolute inset-x-0 mx-auto max-w-xl bottom-0 z-20 flex flex-col bg-surface-1 rounded-t-[1.75rem] border-t border-white/[0.08] shadow-sheet animate-in slide-in-from-bottom duration-300"
+          style={{ top: 'calc(max(var(--sat), 0.75rem) + 3.25rem)' }}
+        >
+          <div
+            className="flex-shrink-0 px-3 pt-2 pb-2"
+            onTouchStart={(e) => {
+              panelTouchRef.current = e.touches[0].clientY;
+            }}
+            onTouchEnd={(e) => {
+              const y0 = panelTouchRef.current;
+              panelTouchRef.current = null;
+              if (y0 !== null && e.changedTouches[0].clientY - y0 > 60) setPanelOpen(false);
+            }}
+          >
+            <div className="relative flex justify-center items-center h-9 -mt-1">
+              <div className="w-10 h-1 rounded-full bg-white/20" />
+              <button
+                onClick={() => setPanelOpen(false)}
+                aria-label="Panel schließen"
+                className={`absolute right-0 w-10 h-10 text-white/80 ${ctrlBtn} hover:bg-white/10`}
+              >
+                <ChevronDown className="w-6 h-6" />
+              </button>
+            </div>
+            <div className="flex items-center">
+          <div className="flex-1 min-w-0 flex items-center p-1 rounded-full bg-white/[0.07]">
+            {(
+              [
+                { id: 'queue', icon: ListMusic, label: 'Als Nächstes' },
+                { id: 'lyrics', icon: Mic2, label: 'Songtext' },
+                { id: 'eq', icon: Sliders, label: 'Studio' },
+              ] as const
+            ).map((t) => {
+              const on = activeTab === t.id;
+              return (
+                <button
+                  key={t.id}
+                  onClick={() => {
+                    tap();
+                    setActiveTab(t.id);
+                  }}
+                  className={`flex-1 min-w-0 h-10 px-1 rounded-full flex items-center justify-center space-x-1 text-[0.8125rem] font-semibold transition-colors ${
+                    on ? 'bg-white text-black shadow' : 'text-white/60 hover:text-white'
+                  }`}
+                >
+                  <span className="truncate">{t.label}</span>
+                  {t.id === 'lyrics' && isSynced && (
+                    <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${on ? 'bg-emerald-600' : 'bg-emerald-400'}`} />
+                  )}
+                </button>
+              );
+            })}
           </div>
 
-          {/* Drawer Content */}
-          <div ref={lyricsScrollContainerRef} className="h-44 overflow-y-auto pt-2 scrollbar-thin">
+            </div>
+          </div>
+
+          {/* Panel Content */}
+          <div ref={lyricsScrollContainerRef} className="relative flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 pt-1 pb-safe scrollbar-none">
             {activeTab === 'queue' ? (
               <div className="space-y-1">
                 {/* Auto-play Radio Toggle */}
-                <div className="flex items-center justify-between px-2 py-1.5 text-xs text-zinc-400 bg-white/5 rounded-lg mb-2">
-                  <div className="flex items-center space-x-2">
-                    <Radio className="w-4 h-4 text-red-500" />
+                <div className="flex items-center justify-between pl-3 pr-2 rounded-2xl bg-white/[0.06] mb-2">
+                  <div className="flex items-center space-x-2.5 text-sm text-white/80">
+                    <Radio className="w-4 h-4 text-red-400" />
                     <span>Endlos-Wiedergabe (Radio)</span>
                   </div>
-                  <button
-                    onClick={() => setAutoPlayRadio(!autoPlayRadio)}
-                    className={`w-9 h-5 rounded-full p-0.5 transition-colors ${
-                      autoPlayRadio ? 'bg-red-600' : 'bg-zinc-700'
-                    }`}
-                  >
-                    <div
-                      className={`w-4 h-4 rounded-full bg-white transition-transform ${
-                        autoPlayRadio ? 'translate-x-4' : 'translate-x-0'
-                      }`}
-                    />
-                  </button>
+                  <Switch on={autoPlayRadio} onChange={setAutoPlayRadio} label="Endlos-Wiedergabe" />
                 </div>
 
                 <button
@@ -857,9 +886,9 @@ export const NowPlayingModal: React.FC = () => {
                     createPlaylistWith(name, queue);
                     toast(`Als Playlist „${name}“ gespeichert`);
                   }}
-                  className="w-full flex items-center justify-center gap-1.5 px-2 py-1.5 mb-2 text-xs text-zinc-300 bg-white/5 rounded-lg active:scale-95"
+                  className="w-full h-11 flex items-center justify-center space-x-2 mb-2 text-[0.8125rem] font-medium text-white/80 bg-white/[0.06] rounded-2xl press"
                 >
-                  <ListPlus className="w-4 h-4" /> Warteschlange als Playlist speichern
+                  <ListPlus className="w-4 h-4" /> <span>Warteschlange als Playlist speichern</span>
                 </button>
 
                 {/* Queue list */}
@@ -869,21 +898,22 @@ export const NowPlayingModal: React.FC = () => {
                     <div
                       key={`${track.id}-${i}`}
                       onClick={() => playTrack(track, queue)}
-                      className={`flex items-center justify-between p-2 rounded-lg cursor-pointer ${
-                        isTrackCurrent ? 'bg-red-600/20 border border-red-500/30' : 'hover:bg-white/5'
+                      className={`flex items-center justify-between min-h-[3.5rem] pl-1.5 py-1 rounded-2xl cursor-pointer transition-colors ${
+                        isTrackCurrent ? 'bg-white/[0.1]' : 'hover:bg-white/[0.04] active:bg-white/[0.07]'
                       }`}
                     >
-                      <div className="flex items-center space-x-2.5 min-w-0 flex-1">
+                      <div className="flex items-center space-x-3 min-w-0 flex-1">
                         <img
                           src={track.thumbnail}
                           alt={track.title}
-                          className="w-8 h-8 rounded object-cover flex-shrink-0"
+                          loading="lazy"
+                          className="w-11 h-11 rounded-lg object-cover flex-shrink-0"
                         />
                         <div className="min-w-0 flex-1">
-                          <div className={`text-xs font-semibold truncate ${isTrackCurrent ? 'text-red-400' : 'text-white'}`}>
+                          <div className={`text-sm font-medium leading-snug truncate ${isTrackCurrent ? 'text-red-400 font-semibold' : 'text-white'}`}>
                             {track.title}
                           </div>
-                          <div className="text-[11px] text-zinc-400 truncate">
+                          <div className="text-xs leading-snug text-white/50 truncate">
                             {track.artist}
                           </div>
                         </div>
@@ -894,17 +924,17 @@ export const NowPlayingModal: React.FC = () => {
                           aria-label="Nach oben"
                           disabled={i === 0}
                           onClick={() => moveInQueue(i, i - 1)}
-                          className="p-1.5 text-zinc-500 disabled:opacity-20"
+                          className="w-9 h-9 flex items-center justify-center rounded-full text-white/50 active:bg-white/10 disabled:opacity-20"
                         >
-                          <ChevronUp className="w-3.5 h-3.5" />
+                          <ChevronUp className="w-[1.125rem] h-[1.125rem]" />
                         </button>
                         <button
                           aria-label="Nach unten"
                           disabled={i === queue.length - 1}
                           onClick={() => moveInQueue(i, i + 1)}
-                          className="p-1.5 text-zinc-500 disabled:opacity-20"
+                          className="w-9 h-9 flex items-center justify-center rounded-full text-white/50 active:bg-white/10 disabled:opacity-20"
                         >
-                          <ChevronDown className="w-3.5 h-3.5" />
+                          <ChevronDown className="w-[1.125rem] h-[1.125rem]" />
                         </button>
                         {i !== queueIndex && (
                           <button
@@ -913,9 +943,9 @@ export const NowPlayingModal: React.FC = () => {
                               removeFromQueue(i);
                               toast('Entfernt', 'info', { label: 'Rückgängig', run: () => insertIntoQueue(i, track) });
                             }}
-                            className="p-1.5 text-zinc-500 hover:text-red-400 transition"
+                            className="w-9 h-9 flex items-center justify-center rounded-full text-white/50 hover:text-red-400 active:bg-white/10"
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
+                            <Trash2 className="w-[1.125rem] h-[1.125rem]" />
                           </button>
                         )}
                       </div>
@@ -932,7 +962,7 @@ export const NowPlayingModal: React.FC = () => {
                     <span className="text-xs">Synchronisiere Songtext...</span>
                   </div>
                 ) : isSynced && syncedLines.length > 0 ? (
-                  <div className="space-y-4 text-center py-4">
+                  <div className="space-y-3 text-left py-2">
                     <div className="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[10px] text-emerald-400 font-semibold mb-2">
                       <Sparkles className="w-3 h-3 text-emerald-400" />
                       <span>Karaoke Live-Synchronisiert (Tippe zum Springen)</span>
@@ -947,10 +977,10 @@ export const NowPlayingModal: React.FC = () => {
                           onClick={() => seek(line.time)}
                           className={`cursor-pointer transition-all duration-300 py-1 px-2 rounded-lg ${
                             isActive
-                              ? 'text-lg sm:text-xl font-black text-white scale-105 drop-shadow-[0_0_16px_rgba(239,68,68,0.7)]'
+                              ? 'text-[1.375rem] leading-snug font-extrabold text-white'
                               : isPast
-                              ? 'text-sm font-medium text-zinc-400 hover:text-zinc-200'
-                              : 'text-sm font-normal text-zinc-600 hover:text-zinc-400'
+                              ? 'text-lg leading-snug font-bold text-white/35 hover:text-white/60'
+                              : 'text-lg leading-snug font-bold text-white/20 hover:text-white/40'
                           }`}
                         >
                           {line.text}
@@ -963,7 +993,7 @@ export const NowPlayingModal: React.FC = () => {
                     <div className="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full bg-white/5 border border-white/10 text-[10px] text-zinc-400 mb-3">
                       <span>{lyricsSource || 'Songtext'}</span>
                     </div>
-                    <div className="text-sm leading-relaxed text-zinc-200 whitespace-pre-line font-medium">
+                    <div className="text-base leading-relaxed text-white/85 whitespace-pre-line font-semibold">
                       {lyrics}
                     </div>
                   </div>
@@ -985,7 +1015,7 @@ export const NowPlayingModal: React.FC = () => {
                 </div>
 
                 {/* DJ Speed & Tempo Bar */}
-                <div className="space-y-1.5 bg-white/5 p-2 rounded-xl border border-white/5">
+                <div className="space-y-2 bg-white/[0.06] p-3 rounded-2xl">
                   <div className="flex items-center justify-between text-[11px] text-zinc-400">
                     <span className="flex items-center space-x-1">
                       <Gauge className="w-3.5 h-3.5 text-red-400" />
@@ -1005,7 +1035,7 @@ export const NowPlayingModal: React.FC = () => {
                       <button
                         key={item.rate}
                         onClick={() => setPlaybackRate(item.rate)}
-                        className={`py-1 px-1.5 rounded-lg text-[11px] font-semibold transition active:scale-95 ${
+                        className={`h-9 px-1.5 rounded-xl text-xs font-semibold press ${
                           playbackRate === item.rate
                             ? 'bg-red-600 text-white font-bold shadow-md'
                             : 'bg-white/5 text-zinc-300 hover:bg-white/10'
@@ -1018,12 +1048,12 @@ export const NowPlayingModal: React.FC = () => {
                 </div>
 
                 {/* Preset Chips */}
-                <div className="flex space-x-1.5 overflow-x-auto pb-1 scrollbar-none">
+                <div className="shelf space-x-2 pb-1 scrollbar-none">
                   {eqPresets.map((p) => (
                     <button
                       key={p.id}
                       onClick={() => setEqualizerPreset(p.id)}
-                      className={`px-2.5 py-1 rounded-lg text-xs whitespace-nowrap transition active:scale-95 ${
+                      className={`h-9 px-3.5 rounded-full text-[0.8125rem] whitespace-nowrap press ${
                         equalizerPreset === p.id
                           ? 'bg-red-600 text-white font-bold'
                           : 'bg-white/10 text-zinc-300 hover:bg-white/15'
@@ -1047,7 +1077,7 @@ export const NowPlayingModal: React.FC = () => {
                     step={1}
                     value={bassGain}
                     onChange={(e) => setBassGain(parseInt(e.target.value))}
-                    className="w-full accent-red-600 h-1.5 bg-zinc-800 rounded-lg cursor-pointer"
+                    className="slider w-full"
                   />
                 </div>
 
@@ -1065,7 +1095,7 @@ export const NowPlayingModal: React.FC = () => {
                       step={1}
                       value={midGain}
                       onChange={(e) => setMidGain(parseInt(e.target.value))}
-                      className="w-full accent-zinc-400 h-1 bg-zinc-800 rounded-lg"
+                      className="slider w-full"
                     />
                   </div>
                   <div>
@@ -1080,7 +1110,7 @@ export const NowPlayingModal: React.FC = () => {
                       step={1}
                       value={trebleGain}
                       onChange={(e) => setTrebleGain(parseInt(e.target.value))}
-                      className="w-full accent-zinc-400 h-1 bg-zinc-800 rounded-lg"
+                      className="slider w-full"
                     />
                   </div>
                 </div>
@@ -1088,7 +1118,7 @@ export const NowPlayingModal: React.FC = () => {
             )}
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };

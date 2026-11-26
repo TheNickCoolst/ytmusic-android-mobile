@@ -1,5 +1,7 @@
 import React, { useState, useRef } from 'react';
-import { Play, MoreVertical, Heart, Download, Check, ListPlus, Radio, Loader2, FolderPlus, X, ListStart, Share2, Trash2, ThumbsDown, Plus, User } from 'lucide-react';
+import { MoreVertical, Heart, Download, Check, ListPlus, Radio, Loader2, FolderPlus, ListStart, Share2, Trash2, ThumbsDown, Plus, User, ChevronLeft } from 'lucide-react';
+import { Sheet, SheetItem } from './Sheet';
+import { EqBars } from './Primitives';
 import { toast, tap, shareTrack } from '../services/ui';
 import { Track } from '../types';
 import { usePlayer } from '../context/PlayerContext';
@@ -9,9 +11,11 @@ interface TrackItemProps {
   track: Track;
   index?: number;
   playlistContext?: Track[];
+  /** chart position, shown left of the cover */
+  rank?: number;
 }
 
-export const TrackItem: React.FC<TrackItemProps> = ({ track, index, playlistContext }) => {
+export const TrackItem: React.FC<TrackItemProps> = ({ track, index, playlistContext, rank }) => {
   const {
     currentTrack,
     isPlaying,
@@ -27,8 +31,10 @@ export const TrackItem: React.FC<TrackItemProps> = ({ track, index, playlistCont
     isDisliked,
   } = usePlayer();
   const [newPlaylistName, setNewPlaylistName] = useState('');
-  const [showMenu, setShowMenu] = useState(false);
-  const [showPlaylistPicker, setShowPlaylistPicker] = useState(false);
+  // one sheet for both the action menu and the playlist picker (single back-button entry)
+  const [sheet, setSheet] = useState<null | 'menu' | 'playlist'>(null);
+  const showMenu = sheet !== null;
+  const setShowMenu = (v: boolean) => setSheet(v ? 'menu' : null);
   const [isDownloading, setIsDownloading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [downloaded, setDownloaded] = useState(track.isCached || api.isDownloaded(track.id));
@@ -83,8 +89,7 @@ export const TrackItem: React.FC<TrackItemProps> = ({ track, index, playlistCont
     playTrack(track, playlistContext);
   };
 
-  const handleDownload = async (e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleDownload = async () => {
     setIsDownloading(true);
     setProgress(0);
     setShowMenu(false);
@@ -109,6 +114,11 @@ export const TrackItem: React.FC<TrackItemProps> = ({ track, index, playlistCont
     }
   };
 
+  const artistName =
+    track.artist && track.artist !== 'Unbekannt' ? track.artist.split(/,| & | feat\.? /i)[0].trim() : '';
+  const disliked = isDisliked(track.id);
+  const close = () => setSheet(null);
+
   return (
     <div
       onClick={handlePlay}
@@ -119,62 +129,58 @@ export const TrackItem: React.FC<TrackItemProps> = ({ track, index, playlistCont
         e.preventDefault();
         setShowMenu(true);
       }}
-      style={dragX ? { transform: `translateX(${dragX}px)`, background: `rgba(220,38,38,${dragX / 400})` } : undefined}
-      className={`group flex items-center justify-between p-2 rounded-xl transition cursor-pointer select-none ${
-        isCurrent ? 'bg-white/10' : 'hover:bg-white/5 active:bg-white/10'
+      style={
+        dragX
+          ? { transform: `translateX(${dragX}px)`, background: `rgba(220,38,38,${Math.min(0.35, dragX / 300)})` }
+          : { transition: 'transform 0.25s var(--ease-out), background-color 0.2s ease' }
+      }
+      className={`group relative flex items-center min-h-[4rem] pl-2 py-1.5 rounded-2xl cursor-pointer select-none ${
+        isCurrent ? 'bg-white/[0.07]' : 'hover:bg-white/[0.04] active:bg-white/[0.07]'
       }`}
     >
-      <div className="flex items-center space-x-3 min-w-0 flex-1 mr-2">
-        {/* Track Thumbnail or Number */}
-        <div className="relative w-12 h-12 flex-shrink-0 rounded-lg overflow-hidden bg-zinc-800 shadow-md">
-          <img
-            src={track.thumbnail}
-            alt={track.title}
-            className="w-full h-full object-cover"
-            loading="lazy"
-          />
-          <div
-            className={`absolute inset-0 bg-black/40 flex items-center justify-center transition-opacity ${
-              isCurrent ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+      {dragX > 0 && (
+        <ListPlus
+          className={`absolute -left-9 w-5 h-5 transition-opacity ${dragX > 90 ? 'text-white opacity-100' : 'text-white/60 opacity-60'}`}
+        />
+      )}
+      <div className="flex items-center min-w-0 flex-1 mr-1">
+        {rank !== undefined && (
+          <span
+            className={`w-7 -ml-1 mr-2 flex-shrink-0 text-center text-base font-extrabold tabular-nums ${
+              rank <= 3 ? 'text-white' : 'text-zinc-600'
             }`}
           >
-            {isCurrent && isPlaying ? (
-              <div className="flex items-end space-x-0.5 h-4">
-                <span className="w-1 bg-red-500 animate-pulse h-full"></span>
-                <span className="w-1 bg-red-500 animate-pulse delay-75 h-2/3"></span>
-                <span className="w-1 bg-red-500 animate-pulse delay-150 h-5/6"></span>
-              </div>
-            ) : (
-              <Play className="w-5 h-5 text-white fill-white ml-0.5" />
-            )}
-          </div>
+            {rank}
+          </span>
+        )}
+        <div className="relative w-12 h-12 flex-shrink-0 rounded-xl overflow-hidden bg-white/[0.06]">
+          <img src={track.thumbnail} alt={track.title} className="w-full h-full object-cover" loading="lazy" />
+          {isCurrent && (
+            <div className="absolute inset-0 bg-black/55 flex items-center justify-center">
+              <EqBars playing={isPlaying} />
+            </div>
+          )}
         </div>
 
-        {/* Track Info */}
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 ml-3">
           <div
-            className={`text-sm font-semibold truncate ${
-              isCurrent ? 'text-red-400 font-bold' : 'text-white'
+            className={`text-[0.9375rem] leading-snug truncate ${
+              isCurrent ? 'text-red-400 font-semibold' : 'text-white font-medium'
             }`}
           >
             {track.title}
           </div>
-          <div className="flex items-center text-xs text-zinc-400 space-x-1.5 truncate">
-            <span className="truncate">{track.artist}</span>
-            {track.duration && (
-              <>
-                <span>•</span>
-                <span>{track.duration}</span>
-              </>
-            )}
-            {isDownloading && (
-              <span className="inline-flex items-center text-[10px] text-red-300 bg-red-500/10 px-1 rounded">
-                <Loader2 className="w-3 h-3 mr-0.5 animate-spin" /> {Math.round(progress * 100)} %
+          <div className="flex items-center text-[0.8125rem] leading-snug text-zinc-400 min-w-0 mt-0.5">
+            {downloaded && (
+              <span className="mr-1.5 inline-flex items-center justify-center w-4 h-4 rounded-full bg-emerald-500/20 text-emerald-400 flex-shrink-0" title="Offline verfügbar">
+                <Check className="w-2.5 h-2.5 stroke-[3]" />
               </span>
             )}
-            {downloaded && (
-              <span className="inline-flex items-center text-[10px] text-emerald-400 bg-emerald-500/10 px-1 py-0.2 rounded">
-                <Check className="w-3 h-3 mr-0.5" /> Offline
+            <span className="truncate">{track.artist}</span>
+            {track.duration && <span className="flex-shrink-0 ml-1.5 text-zinc-500">· {track.duration}</span>}
+            {isDownloading && (
+              <span className="flex-shrink-0 ml-2 inline-flex items-center text-[0.6875rem] text-red-300">
+                <Loader2 className="w-3 h-3 mr-1 animate-spin" /> {Math.round(progress * 100)} %
               </span>
             )}
           </div>
@@ -182,7 +188,7 @@ export const TrackItem: React.FC<TrackItemProps> = ({ track, index, playlistCont
       </div>
 
       {/* Trailing actions */}
-      <div className="flex items-center space-x-1 relative" onClick={(e) => e.stopPropagation()}>
+      <div className="flex items-center flex-shrink-0" onClick={(e) => e.stopPropagation()}>
         <button
           onClick={() => {
             tap();
@@ -190,211 +196,200 @@ export const TrackItem: React.FC<TrackItemProps> = ({ track, index, playlistCont
             toast(liked ? 'Aus Lieblingssongs entfernt' : 'Zu Lieblingssongs hinzugefügt');
           }}
           aria-label={liked ? 'Gefällt mir nicht mehr' : 'Gefällt mir'}
-          className="p-2 text-zinc-400 hover:text-red-500 active:scale-90 transition"
+          className={`w-11 h-11 rounded-full flex items-center justify-center press ${
+            liked ? 'text-red-500' : 'text-zinc-500 hover:text-white'
+          }`}
         >
-          <Heart className={`w-4 h-4 ${liked ? 'fill-red-500 text-red-500' : ''}`} />
+          <Heart className={`w-5 h-5 ${liked ? 'fill-current' : ''}`} />
         </button>
 
         <button
-          onClick={() => setShowMenu(!showMenu)}
+          onClick={() => {
+            tap();
+            setShowMenu(!showMenu);
+          }}
           aria-label="Mehr Optionen"
-          className="p-2 text-zinc-400 hover:text-white active:scale-90 transition"
+          className="w-11 h-11 rounded-full flex items-center justify-center text-zinc-400 hover:text-white press"
         >
-          <MoreVertical className="w-4 h-4" />
+          <MoreVertical className="w-5 h-5" />
         </button>
+      </div>
 
-        {/* Dropdown Menu */}
-        {showMenu && (
-          <>
-            <div
-              className="fixed inset-0 z-40"
-              onClick={() => setShowMenu(false)}
+      <Sheet
+        open={sheet !== null}
+        onClose={close}
+        header={
+          sheet === 'playlist' ? (
+            <div className="flex items-center px-2 pb-2">
+              <button
+                onClick={() => setSheet('menu')}
+                aria-label="Zurück"
+                className="w-11 h-11 rounded-full flex items-center justify-center text-zinc-300 active:bg-white/10"
+              >
+                <ChevronLeft className="w-6 h-6" />
+              </button>
+              <span className="text-base font-bold text-white">In Playlist speichern</span>
+            </div>
+          ) : (
+            <div className="flex items-center px-5 pb-3 border-b border-white/[0.06]">
+              <img src={track.thumbnail} alt="" className="w-12 h-12 rounded-xl object-cover flex-shrink-0" />
+              <div className="min-w-0 ml-3">
+                <div className="text-[0.9375rem] font-semibold text-white truncate">{track.title}</div>
+                <div className="text-[0.8125rem] text-zinc-400 truncate">{track.artist}</div>
+              </div>
+            </div>
+          )
+        }
+      >
+        {sheet === 'menu' && (
+          <div className="pt-2">
+            <SheetItem
+              icon={ListStart}
+              label="Als Nächstes abspielen"
+              onClick={() => {
+                playNext(track);
+                close();
+                toast('Wird als Nächstes gespielt');
+              }}
             />
-            <div className="absolute right-0 top-10 z-50 w-56 bg-[#1f1f1f] border border-white/10 rounded-xl shadow-2xl py-1">
-              <button
+            <SheetItem
+              icon={ListPlus}
+              label="Zur Warteschlange"
+              onClick={() => {
+                addToQueue(track);
+                close();
+                toast('Zur Warteschlange hinzugefügt');
+              }}
+            />
+            <SheetItem icon={FolderPlus} label="In Playlist speichern" onClick={() => setSheet('playlist')} />
+            <SheetItem
+              icon={Heart}
+              active={liked}
+              label={liked ? 'Aus Lieblingssongs entfernen' : 'Zu Lieblingssongs'}
+              onClick={() => {
+                toggleLike(track);
+                close();
+                toast(liked ? 'Aus Lieblingssongs entfernt' : 'Zu Lieblingssongs hinzugefügt');
+              }}
+            />
+            {downloaded ? (
+              <SheetItem
+                icon={Trash2}
+                label="Offline-Kopie löschen"
+                onClick={async () => {
+                  close();
+                  await api.deleteFromCache(track.id).catch(() => {});
+                  setDownloaded(false);
+                  toast('Offline-Kopie gelöscht');
+                }}
+              />
+            ) : (
+              <SheetItem
+                icon={isDownloading ? Loader2 : Download}
+                label="Für Offline laden"
+                disabled={isDownloading}
+                onClick={handleDownload}
+              />
+            )}
+            <SheetItem
+              icon={Radio}
+              label="Song-Radio starten"
+              onClick={() => {
+                close();
+                toast('Radio wird geladen…');
+                api
+                  .getRadio(track.id)
+                  .then((r) => {
+                    if (r.length > 0) playTrack(r[0], r);
+                    else toast('Kein Radio für diesen Song gefunden', 'error');
+                  })
+                  .catch(() => toast('Radio konnte nicht geladen werden', 'error'));
+              }}
+            />
+            {artistName && (
+              <SheetItem
+                icon={User}
+                label={`Mehr von ${artistName}`}
                 onClick={() => {
-                  playNext(track);
-                  setShowMenu(false);
-                  toast('Wird als Nächstes gespielt');
+                  close();
+                  window.dispatchEvent(new CustomEvent('ytm:search', { detail: artistName }));
                 }}
-                className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-white/10 flex items-center space-x-2.5"
-              >
-                <ListStart className="w-4 h-4 text-zinc-400" />
-                <span>Als Nächstes abspielen</span>
-              </button>
-
-              <button
-                onClick={() => {
-                  addToQueue(track);
-                  setShowMenu(false);
-                  toast('Zur Warteschlange hinzugefügt');
-                }}
-                className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-white/10 flex items-center space-x-2.5"
-              >
-                <ListPlus className="w-4 h-4 text-zinc-400" />
-                <span>Zur Warteschlange</span>
-              </button>
-
-              <button
-                onClick={() => {
-                  setShowMenu(false);
-                  setShowPlaylistPicker(true);
-                }}
-                className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-white/10 flex items-center space-x-2.5"
-              >
-                <FolderPlus className="w-4 h-4 text-zinc-400" />
-                <span>In Playlist speichern</span>
-              </button>
-
-              {downloaded ? (
-                <button
-                  onClick={async () => {
-                    setShowMenu(false);
-                    await api.deleteFromCache(track.id).catch(() => {});
-                    setDownloaded(false);
-                    toast('Offline-Kopie gelöscht');
-                  }}
-                  className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-white/10 flex items-center space-x-2.5"
-                >
-                  <Trash2 className="w-4 h-4 text-zinc-400" />
-                  <span>Offline-Kopie löschen</span>
-                </button>
-              ) : (
-                <button
-                  onClick={handleDownload}
-                  disabled={isDownloading}
-                  className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-white/10 flex items-center space-x-2.5"
-                >
-                  {isDownloading ? (
-                    <Loader2 className="w-4 h-4 text-red-400 animate-spin" />
-                  ) : (
-                    <Download className="w-4 h-4 text-zinc-400" />
-                  )}
-                  <span>Für Offline laden</span>
-                </button>
-              )}
-
-              <button
-                onClick={() => {
-                  setShowMenu(false);
-                  toast('Radio wird geladen…');
-                  api
-                    .getRadio(track.id)
-                    .then((r) => {
-                      if (r.length > 0) playTrack(r[0], r);
-                      else toast('Kein Radio für diesen Song gefunden', 'error');
-                    })
-                    .catch(() => toast('Radio konnte nicht geladen werden', 'error'));
-                }}
-                className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-white/10 flex items-center space-x-2.5"
-              >
-                <Radio className="w-4 h-4 text-zinc-400" />
-                <span>Song-Radio starten</span>
-              </button>
-
-              {track.artist && track.artist !== 'Unbekannt' && (
-                <button
-                  onClick={() => {
-                    setShowMenu(false);
-                    window.dispatchEvent(new CustomEvent('ytm:search', { detail: track.artist.split(/,| & | feat\.? /i)[0].trim() }));
-                  }}
-                  className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-white/10 flex items-center space-x-2.5"
-                >
-                  <User className="w-4 h-4 text-zinc-400" />
-                  <span className="truncate">Mehr von {track.artist.split(/,| & | feat\.? /i)[0].trim()}</span>
-                </button>
-              )}
-
-              <button
-                onClick={() => {
-                  setShowMenu(false);
-                  shareTrack(track);
-                }}
-                className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-white/10 flex items-center space-x-2.5"
-              >
-                <Share2 className="w-4 h-4 text-zinc-400" />
-                <span>Teilen</span>
-              </button>
-
-              <button
-                onClick={() => {
-                  setShowMenu(false);
-                  const was = isDisliked(track.id);
-                  toggleDislike(track.id);
-                  toast(was ? 'Wieder interessiert' : 'Wird beim Mischen übersprungen');
-                }}
-                className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-white/10 flex items-center space-x-2.5"
-              >
-                <ThumbsDown className={`w-4 h-4 ${isDisliked(track.id) ? 'text-red-400 fill-red-400' : 'text-zinc-400'}`} />
-                <span>{isDisliked(track.id) ? 'Wieder interessiert' : 'Nicht interessiert'}</span>
-              </button>
-            </div>
-          </>
-        )}
-
-        {/* Playlist Picker Dialog */}
-        {showPlaylistPicker && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-            <div className="w-full max-w-xs bg-[#1c1c1c] border border-white/10 rounded-2xl p-4 shadow-2xl">
-              <div className="flex items-center justify-between pb-2 border-b border-white/10">
-                <span className="text-xs font-bold text-white flex items-center space-x-1.5">
-                  <FolderPlus className="w-4 h-4 text-red-500" />
-                  <span>Playlist wählen</span>
-                </span>
-                <button
-                  onClick={() => setShowPlaylistPicker(false)}
-                  className="p-1 text-zinc-400 hover:text-white"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              <form
-                className="mt-3 flex items-center gap-2"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  const name = newPlaylistName.trim();
-                  if (!name) return;
-                  createPlaylist(name);
-                  setNewPlaylistName('');
-                  toast(`Playlist „${name}“ erstellt`);
-                }}
-              >
-                <input
-                  value={newPlaylistName}
-                  onChange={(e) => setNewPlaylistName(e.target.value)}
-                  placeholder="Neue Playlist…"
-                  className="flex-1 min-w-0 bg-white/5 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-red-500"
-                />
-                <button type="submit" aria-label="Playlist erstellen" className="p-1.5 rounded-lg bg-red-600 text-white active:scale-95">
-                  <Plus className="w-4 h-4" />
-                </button>
-              </form>
-              <div className="mt-3 max-h-52 overflow-y-auto space-y-1">
-                {playlists.length === 0 ? (
-                  <div className="text-xs text-zinc-400 text-center py-4">Noch keine Playlists – oben eine anlegen.</div>
-                ) : (
-                  playlists.map((pl) => (
-                    <button
-                      key={pl.id}
-                      onClick={() => {
-                        const already = pl.tracks.some((t) => t.id === track.id);
-                        addToPlaylist(pl.id, track);
-                        setShowPlaylistPicker(false);
-                        toast(already ? `Schon in „${pl.name}“` : `In „${pl.name}“ gespeichert`);
-                      }}
-                      className="w-full p-2 text-left text-xs text-white hover:bg-white/10 rounded-lg flex items-center justify-between transition"
-                    >
-                      <span className="font-semibold truncate">{pl.name}</span>
-                      <span className="text-[10px] text-zinc-400">{pl.tracks.length} Titel</span>
-                    </button>
-                  ))
-                )}
-              </div>
-            </div>
+              />
+            )}
+            <SheetItem
+              icon={Share2}
+              label="Teilen"
+              onClick={() => {
+                close();
+                shareTrack(track);
+              }}
+            />
+            <SheetItem
+              icon={ThumbsDown}
+              active={disliked}
+              label={disliked ? 'Wieder interessiert' : 'Nicht interessiert'}
+              onClick={() => {
+                close();
+                toggleDislike(track.id);
+                toast(disliked ? 'Wieder interessiert' : 'Wird beim Mischen übersprungen');
+              }}
+            />
           </div>
         )}
-      </div>
+
+        {sheet === 'playlist' && (
+          <div className="px-2">
+            <form
+              className="flex items-center space-x-2 mb-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const name = newPlaylistName.trim();
+                if (!name) return;
+                createPlaylist(name);
+                setNewPlaylistName('');
+                toast(`Playlist „${name}“ erstellt`);
+              }}
+            >
+              <input
+                value={newPlaylistName}
+                onChange={(e) => setNewPlaylistName(e.target.value)}
+                placeholder="Neue Playlist…"
+                className="flex-1 min-w-0 h-12 bg-white/[0.06] border border-white/[0.08] rounded-2xl px-4 text-[0.9375rem] text-white placeholder-zinc-500 focus:outline-none focus:border-red-500/70"
+              />
+              <button
+                type="submit"
+                aria-label="Playlist erstellen"
+                className="w-12 h-12 rounded-2xl bg-red-600 text-white flex items-center justify-center press"
+              >
+                <Plus className="w-5 h-5" />
+              </button>
+            </form>
+            {playlists.length === 0 ? (
+              <div className="text-sm text-zinc-500 text-center py-6">Noch keine Playlists – oben eine anlegen.</div>
+            ) : (
+              <div className="-mx-2">
+                {playlists.map((pl) => {
+                  const already = pl.tracks.some((t) => t.id === track.id);
+                  return (
+                    <SheetItem
+                      key={pl.id}
+                      icon={already ? Check : FolderPlus}
+                      active={already}
+                      label={pl.name}
+                      hint={`${pl.tracks.length} Titel`}
+                      onClick={() => {
+                        addToPlaylist(pl.id, track);
+                        close();
+                        toast(already ? `Schon in „${pl.name}“` : `In „${pl.name}“ gespeichert`);
+                      }}
+                    />
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+      </Sheet>
     </div>
   );
 };

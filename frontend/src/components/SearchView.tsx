@@ -4,6 +4,8 @@ import { Track } from '../types';
 import { api } from '../services/api';
 import { TrackItem } from './TrackItem';
 import { usePlayer } from '../context/PlayerContext';
+import { ExploreView } from './ExploreView';
+import { PageTitle, SectionHeader } from './Primitives';
 
 export const SearchView: React.FC<{ initialQuery?: string }> = ({ initialQuery }) => {
   const [query, setQuery] = useState(initialQuery || '');
@@ -142,9 +144,10 @@ export const SearchView: React.FC<{ initialQuery?: string }> = ({ initialQuery }
   ];
 
   return (
-    <div className="pb-36 px-4 space-y-4 pt-2">
+    <div className="pb-player px-4 space-y-5 pt-3">
+      <PageTitle title="Suche" />
       {/* Search Input Bar */}
-      <div className="sticky top-14 z-20 bg-[#030303]/95 backdrop-blur-md pt-1 pb-2 -mx-4 px-4">
+      <div className="sticky top-0 z-20 bg-[#030303]/95 pt-1 pb-2 -mx-4 px-4 !mt-3">
         <form
           className="relative flex items-center"
           onSubmit={(e) => {
@@ -154,40 +157,41 @@ export const SearchView: React.FC<{ initialQuery?: string }> = ({ initialQuery }
             (document.activeElement as HTMLElement | null)?.blur(); // hide the keyboard
           }}
         >
-          <Search className="absolute left-3.5 w-4 h-4 text-zinc-400 pointer-events-none" />
+          <Search className="absolute left-4 w-5 h-5 text-zinc-600 pointer-events-none" />
           <input
             type="search"
             enterKeyHint="search"
             value={query}
             onChange={handleInputChange}
-            placeholder="Songs, Alben, Künstler suchen..."
-            className="w-full bg-[#181818] border border-white/10 rounded-2xl pl-10 pr-10 py-3 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-red-500 shadow-inner"
-            autoFocus
+            placeholder="Was möchtest du hören?"
+            aria-label="Suchen"
+            className="w-full h-12 bg-white text-black border-2 border-transparent rounded-2xl pl-12 pr-12 text-base font-medium placeholder-zinc-500 focus:outline-none focus:border-red-500 transition-colors"
           />
           {query && (
             <button
               type="button"
               aria-label="Suche leeren"
               onClick={handleClear}
-              className="absolute right-3 p-1 rounded-full text-zinc-400 hover:text-white"
+              className="absolute right-1 w-10 h-10 flex items-center justify-center rounded-full text-zinc-600 hover:text-black active:bg-black/10"
             >
-              <X className="w-4 h-4" />
+              <X className="w-5 h-5" />
             </button>
           )}
         </form>
 
-        {/* Filter Chips */}
-        <div className="flex space-x-2 mt-2.5 overflow-x-auto pb-1 scrollbar-none">
+        {/* Filter Chips (only once there is something to filter) */}
+        {query.trim() && (
+        <div className="shelf space-x-2 mt-3 -mx-4 px-4 pb-1 scrollbar-none">
           {filterChips.map((chip) => {
             const isSelected = filter === chip.id;
             return (
               <button
                 key={chip.id}
                 onClick={() => handleFilterChange(chip.id)}
-                className={`px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap transition active:scale-95 ${
+                className={`h-9 px-4 rounded-full text-[0.8125rem] font-medium whitespace-nowrap press ${
                   isSelected
                     ? 'bg-white text-black font-semibold'
-                    : 'bg-white/10 text-zinc-300 hover:bg-white/15'
+                    : 'bg-white/[0.08] text-zinc-200 hover:bg-white/[0.12]'
                 }`}
               >
                 {chip.label}
@@ -195,22 +199,25 @@ export const SearchView: React.FC<{ initialQuery?: string }> = ({ initialQuery }
             );
           })}
         </div>
+        )}
       </div>
 
       {/* Suggestions while typing */}
       {suggestions.length > 0 && query.trim().length > 1 && (
-        <div className="flex flex-wrap gap-2">
-          {suggestions.map((sg) => (
+        <div className="-mx-2">
+          {suggestions.slice(0, 6).map((sg) => (
             <button
               key={sg}
               onClick={() => {
                 if (debounceTimeout.current) clearTimeout(debounceTimeout.current);
                 setQuery(sg);
                 performSearch(sg, filter);
+                (document.activeElement as HTMLElement | null)?.blur();
               }}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/5 border border-white/10 text-xs text-zinc-200 active:scale-95"
+              className="w-full h-11 px-2 flex items-center rounded-xl text-left text-[0.9375rem] text-zinc-200 hover:bg-white/[0.05] active:bg-white/[0.08]"
             >
-              <Search className="w-3 h-3 text-zinc-500" /> {sg}
+              <Search className="w-4 h-4 mr-3 text-zinc-500 flex-shrink-0" />
+              <span className="truncate">{sg}</span>
             </button>
           ))}
         </div>
@@ -243,8 +250,8 @@ export const SearchView: React.FC<{ initialQuery?: string }> = ({ initialQuery }
       {/* Results List */}
       {!loading && results.length > 0 && (
         <div className="space-y-1">
-          <div className="text-xs font-semibold text-zinc-400 px-1 mb-2">
-            Suchergebnisse ({results.length})
+          <div className="text-[0.8125rem] font-semibold text-zinc-400 px-1 mb-1">
+            {results.length} Ergebnisse
           </div>
           {results.map((track, i) => (
             <TrackItem
@@ -279,29 +286,31 @@ export const SearchView: React.FC<{ initialQuery?: string }> = ({ initialQuery }
       {/* Recent / Suggested searches (when query is empty) */}
       {!query && recentSearches.length > 0 && (
         <div>
-          <div className="flex items-center justify-between mb-1">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400">Letzte Suchen</h3>
-            <button
-              onClick={() => {
-                setRecentSearches([]);
-                saveRecent([]);
-              }}
-              className="text-[11px] text-zinc-400 px-2 py-1"
-            >
-              Alle löschen
-            </button>
-          </div>
-          <div className="space-y-0.5">
+          <SectionHeader
+            title="Zuletzt gesucht"
+            action={
+              <button
+                onClick={() => {
+                  setRecentSearches([]);
+                  saveRecent([]);
+                }}
+                className="h-9 px-3 rounded-full text-[0.8125rem] font-semibold text-zinc-400 hover:text-white active:bg-white/10"
+              >
+                Alle löschen
+              </button>
+            }
+          />
+          <div className="-mx-2">
             {recentSearches.map((term) => (
-              <div key={term} className="flex items-center">
+              <div key={term} className="flex items-center rounded-xl hover:bg-white/[0.04]">
                 <button
                   onClick={() => {
                     setQuery(term);
                     performSearch(term, filter);
                   }}
-                  className="flex-1 min-w-0 flex items-center gap-3 py-2 text-left text-sm text-zinc-200 active:opacity-60"
+                  className="flex-1 min-w-0 h-11 px-2 flex items-center text-left text-[0.9375rem] text-zinc-200 active:opacity-60"
                 >
-                  <History className="w-4 h-4 text-zinc-500 flex-shrink-0" />
+                  <History className="w-4 h-4 mr-3 text-zinc-500 flex-shrink-0" />
                   <span className="truncate">{term}</span>
                 </button>
                 <button
@@ -313,7 +322,7 @@ export const SearchView: React.FC<{ initialQuery?: string }> = ({ initialQuery }
                       return next;
                     })
                   }
-                  className="p-2 text-zinc-500"
+                  className="w-11 h-11 flex items-center justify-center rounded-full text-zinc-500 hover:text-white active:bg-white/10"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -325,8 +334,8 @@ export const SearchView: React.FC<{ initialQuery?: string }> = ({ initialQuery }
 
       {!query && (
         <div>
-          <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 mb-2">Vorschläge</h3>
-          <div className="flex flex-wrap gap-2">
+          <SectionHeader title="Beliebte Künstler" />
+          <div className="shelf space-x-2 -mx-4 px-4 scrollbar-none">
             {SUGGESTIONS.filter((t) => !recentSearches.includes(t)).map((term) => (
               <button
                 key={term}
@@ -334,13 +343,21 @@ export const SearchView: React.FC<{ initialQuery?: string }> = ({ initialQuery }
                   setQuery(term);
                   performSearch(term, filter);
                 }}
-                className="px-3.5 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/5 text-xs text-zinc-300 transition active:scale-95"
+                className="h-10 px-4 rounded-full bg-white/[0.08] hover:bg-white/[0.12] text-[0.875rem] font-medium text-zinc-200 whitespace-nowrap press"
               >
                 {term}
               </button>
             ))}
           </div>
         </div>
+      )}
+
+      {/* Browse genres & moods (former "Entdecken" tab) */}
+      {!query && (
+        <section>
+          <SectionHeader eyebrow="Genres & Stimmungen" title="Stöbern" />
+          <ExploreView embedded />
+        </section>
       )}
     </div>
   );
